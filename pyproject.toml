@@ -1,0 +1,17 @@
+[project]
+name = "sql_blocks"
+version = "0.0.1"
+authors = [
+  { name="Julio Cascalles", email="julio.cascalles@outlook.com" },
+]
+description = '''Allows you to create objects for parts of SQL query commands. Also to combine these objects by joining them, adding or removing parts...'''
+readme = "README.md"
+requires-python = ">=3.8"
+classifiers = [
+    "Programming Language :: Python :: 3",
+    "License :: OSI Approved :: MIT License",
+    "Operating System :: OS Independent",
+]
+
+[project.urls]
+Homepage = "https://github.com/julio-cascalles/sql_blocks"
