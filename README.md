@@ -38,7 +38,6 @@ You can specify your own alias:  `a = Select('Actor a')`
     `a = Select( 'Actor a', age=Between(45, 69) )`
 
     3.2 -- Sub-queries:
-
 ```
 query = Select('Movie m', title=Field,
     id=SubSelect(
@@ -69,6 +68,15 @@ query = Select('Movie m', title=Field,
     )
 ```
 > Could be AND=Options(...)
+
+3.4 -- Negative conditions use the _Not_ class instead of _Where_
+```
+franchise
+based_on_book=Not.is_null()
+```
+
+3.5 -- List of values
+hash_tag=Where.list(['space', 'monster', 'gore'])
 
 ---
 ### 4 - A field can be two things at the same time:
@@ -277,5 +285,15 @@ m2 = Select(
 **m1 == m2 # --- True!**
 
 ---
----
 
+### 10 - CASE...WHEN...THEN
+Select(
+    'Product',
+    label=Case('price').when(
+        lt(50), 'cheap'
+    ).when(
+        gt(100), 'expensive'
+    ).else_value(
+        'normal'
+    )
+)
