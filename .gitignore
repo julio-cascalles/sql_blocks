@@ -1,4 +1,5 @@
 /sql_blocks.egg-info
 /dist
 /.ipynb_checkpoints
-/__pycache__
+*/__pycache__/*
+__pycache__

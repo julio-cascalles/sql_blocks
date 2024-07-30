@@ -11,6 +11,7 @@ KEYWORD = {
 SELECT, FROM, WHERE, GROUP_BY, ORDER_BY, LIMIT = KEYWORD.keys()
 USUAL_KEYS = [SELECT, WHERE, GROUP_BY, ORDER_BY]
 
+
 class SQLObject:
     def __init__(self, table_name: str=''):
         self.alias = ''
@@ -133,15 +134,21 @@ class ForeignKey:
         return cls.references.get(key, '').split('_')
 
 
+def quoted(value) -> str:
+    if isinstance(value, str):
+        value = f"'{value}'"
+    return str(value)
+
+
 class Where:
+    prefix = ''
+
     def __init__(self, expr: str):
-        self.expr = expr
+        self.expr = f'{self.prefix}{expr}'
 
     @classmethod
     def __constructor(cls, operator: str, value):
-        if isinstance(value, str):
-            return cls(expr=f"{operator} '{value}'")
-        return cls(expr=f'{operator} {value}')
+        return cls(expr=f'{operator} {quoted(value)}')
 
     @classmethod
     def eq(cls, value):
@@ -170,6 +177,12 @@ class Where:
     @classmethod
     def is_null(cls):
         return cls('IS NULL')
+    
+    @classmethod
+    def list(cls, values):
+        if isinstance(values, list):
+            values = ','.join(quoted(v) for v in values)
+        return cls(f'IN ({values})')
 
     def add(self, name: str, main: SQLObject):
         main.values.setdefault(WHERE, []).append('{} {}'.format(
@@ -177,27 +190,39 @@ class Where:
         ))
 
 
-class Not:
-    def __init__(self, condition: Where):
-        self.condition = condition
-        """
-            NOT NULL
-            NOT LIKE '%   %'
-            NOT in (...)
-            value=Not(Where.eq(123)) # --->  'value <> 123'
-        """
+class Not(Where):
+    prefix = 'NOT '
+
+    @classmethod
+    def eq(cls, value):
+        return Where.__constructor('<>', value)
 
 
 class Case:
-    def __init__(self, default: str=''):
+    def __init__(self, field: str):
         self.__conditions = {}
+        self.default = None
+        self.field = field
 
-    def when(self, result: str, condition: Where):
-        self.__conditions.setdefault(result, []).append(condition)
+    def when(self, condition: Where, result: str):
+        self.__conditions[result] = condition
+        return self
+    
+    def else_value(self, default: str):
+        self.default = default
         return self
     
     def add(self, name: str, main: SQLObject):
-        Field.add(name, main)
+        field = Field.format(self.field, main)
+        default = quoted(self.default)
+        name = 'CASE \n{}\n\tEND AS {}'.format(
+            '\n'.join(
+                f'\t\tWHEN {field} {cond.expr} THEN {quoted(res)}'
+                for res, cond in self.__conditions.items()
+            ) + f'\n\t\tELSE {default}' if default else '',
+            name
+        )
+        main.values.setdefault(SELECT, []).append(name)
 
 
 class Options:
@@ -293,10 +318,7 @@ class Select(SQLObject):
 
     def __init__(self, table_name: str='', **values):
         super().__init__(table_name)
-        to_list = lambda x: x if isinstance(x, list) else [x]
-        for name, params in values.items():
-            for obj in to_list(params):
-                obj.add(name, self)
+        self.__call__(**values)
         self.break_lines = True
 
     def add(self, name: str, main: SQLObject):
@@ -346,10 +368,12 @@ class Select(SQLObject):
         return f'{select}{_from}{where}{groupBy}{orderBy}{limit}'.strip()
    
     def __call__(self, **values):
-        for name, obj in values.items():
-            obj.add(name, self)
+        to_list = lambda x: x if isinstance(x, list) else [x]
+        for name, params in values.items():
+            for obj in to_list(params):
+                obj.add(name, self)
         return self
-    
+
     def __eq__(self, other: SQLObject) -> bool:
         def sorted_values(obj: SQLObject, key: str) -> list:
             return sorted(obj.values.get(key, []))
@@ -407,4 +431,19 @@ class Select(SQLObject):
 class SubSelect(Select):
     def add(self, name: str, main: SQLObject):
         self.break_lines = False
-        Where(f'IN ({self})').add(name, main)
+        Where.list(self).add(name, main)
+
+
+if __name__ == "__main__":
+    query = Select(
+        Produto=Table('nome,valor'),
+        classe_prod=Case('valor').when(
+            Where.gte(3000), 'classe A'
+        ).when(
+            Where.gte(1000), 'classe B'
+        ).else_value('classe C'),
+        restricao=Where.is_null(),
+        # categoria=Where.list([3,5,14,29])
+        categoria=Not.list(['A','B','C','D'])
+ )
+    print(query)

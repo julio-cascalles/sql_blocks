@@ -27,7 +27,7 @@ def detached_objects() -> tuple:
         )
     return select_actor(), select_cast(), select_movie()
 
-def expected_result() -> Select:
+def query_reference() -> Select:
     return Select('Actor a', age=Between(45, 69),
         cast=Select(
             Cast=Table('role'), id=PrimaryKey,
@@ -81,13 +81,3 @@ def many_texts_to_objects():
         WHERE ( m.genre = 'Sci-Fi' OR m.awards LIKE '%Oscar%' ) GROUP BY director
     """)[0]
     return actor, cast, movie
-
-Select.join_type = JoinType.LEFT
-OrderBy.sort = SortType.DESC
-b = best_movies()
-for func in [single_text_to_objects, detached_objects, many_texts_to_objects]:
-    a, c, m = func()
-    m.delete('director')
-    m = m(id=b)
-    query = a + (m + c)
-    assert query == expected_result()

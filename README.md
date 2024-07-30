@@ -20,7 +20,7 @@ You can specify your own alias:  `a = Select('Actor a')`
 
     - Select(
         'Actor a', 
-        name=NamedField('actors_name'), Distinct
+        name=NamedField('actors_name', Distinct)
     )
 
 ---
