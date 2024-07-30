@@ -68,8 +68,8 @@ def single_text_to_objects():
 
 def many_texts_to_objects():
     ForeignKey.references = {
-        'Actor_Cast': 'cast_id',
-        'Cast_Movie': 'movie_id',
+        ('Actor', 'Cast'): ('cast', 'id'),
+        ('Cast', 'Movie'): ('movie', 'id'),
     }
     actor = Select.parse('''
         SELECT name as actors_name FROM Actor a

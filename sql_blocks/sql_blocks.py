@@ -124,14 +124,19 @@ class ForeignKey:
     def __init__(self, table_name: str):
         self.table_name = table_name
 
+    @staticmethod
+    def get_key(obj1: SQLObject, obj2: SQLObject) -> tuple:
+        return obj1.table_name, obj2.table_name
+
     def add(self, name: str, main: SQLObject):
-        key = f'{main.table_name}_{self.table_name}'
-        ForeignKey.references[key] = name
+        key = self.get_key(main, self)
+        ForeignKey.references[key] = (name, '')
 
     @classmethod
-    def find(cls, obj1: SQLObject, obj2: SQLObject) -> list:
-        key = f'{obj1.table_name}_{obj2.table_name}'
-        return cls.references.get(key, '').split('_')
+    def find(cls, obj1: SQLObject, obj2: SQLObject) -> tuple:
+        key = cls.get_key(obj1, obj2)
+        a, b = cls.references.get(key, ('', ''))
+        return a, (b or obj2.key_field)
 
 
 def quoted(value) -> str:
@@ -341,17 +346,17 @@ class Select(SQLObject):
             update_values(key, self.values.get(key, []))
 
     def __add__(self, other: SQLObject):
-        foreign_field, *primary_key = ForeignKey.find(self, other)
+        foreign_field, primary_key = ForeignKey.find(self, other)
         if not foreign_field:
-            foreign_field, *primary_key = ForeignKey.find(other, self)
+            foreign_field, primary_key = ForeignKey.find(other, self)
             if foreign_field:
-                if primary_key:
-                    PrimaryKey.add(primary_key[0], self)
+                if primary_key and not self.key_field:
+                    PrimaryKey.add(primary_key, self)
                 self.add(foreign_field, other)
                 return other
             raise ValueError(f'No relationship found between {self.table_name} and {other.table_name}.')
         elif primary_key:
-            PrimaryKey.add(primary_key[0], other)
+            PrimaryKey.add(primary_key, other)
         other.add(foreign_field, self)
         return self
 
@@ -419,7 +424,7 @@ class Select(SQLObject):
                         fld.strip() for fld in re.split(
                             separator, values[key]
                         ) if len(tables) == 1
-                        or re.findall(f'^[( ]*{obj.alias}\.', fld)
+                        or re.findall(f'^[( ]*{obj.alias}.', fld)
                     ]
                     obj.values[key] = [
                         f'{obj.alias}.{f}' if not '.' in f else f for f in fields
