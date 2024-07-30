@@ -432,18 +432,3 @@ class SubSelect(Select):
     def add(self, name: str, main: SQLObject):
         self.break_lines = False
         Where.list(self).add(name, main)
-
-
-if __name__ == "__main__":
-    query = Select(
-        Produto=Table('nome,valor'),
-        classe_prod=Case('valor').when(
-            Where.gte(3000), 'classe A'
-        ).when(
-            Where.gte(1000), 'classe B'
-        ).else_value('classe C'),
-        restricao=Where.is_null(),
-        # categoria=Where.list([3,5,14,29])
-        categoria=Not.list(['A','B','C','D'])
- )
-    print(query)
