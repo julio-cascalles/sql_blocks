@@ -240,7 +240,7 @@ m = Select...
             ''')[0]
 
         a2 = Select('Actor',
-            age=Between(45, 69), gender=GroupBy,
+            age=[ Between(45, 69), Max ],
             gender=[GroupBy, Field]
         )       
 ```
