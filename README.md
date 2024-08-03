@@ -234,7 +234,7 @@ m = Select...
 9.1
 ```
         a1 = Select.parse('''
-                SELECT gender, max(age) FROM Actor act
+                SELECT gender, Max(act.age) FROM Actor act
                 WHERE act.age <= 69 AND act.age >= 45
                 GROUP BY gender
             ''')[0]
