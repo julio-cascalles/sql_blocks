@@ -1,4 +1,6 @@
 from enum import Enum
+import re
+
 
 KEYWORD = {
     'SELECT': (',{}', 'SELECT *'),
@@ -54,9 +56,10 @@ class Field:
 
     @classmethod
     def format(cls, name: str, main: SQLObject) -> str:
+        name = name.strip()
         if name == '_':
             name = '*'
-        else:
+        elif '.' not in name:
             name = f'{main.alias}.{name}'
         if Function in cls.__bases__:
             name = f'{cls.__name__}({name})'
@@ -319,7 +322,7 @@ class JoinType(Enum):
 
 class Select(SQLObject):
     join_type: JoinType = JoinType.INNER
-    REGEX = None
+    REGEX = {}
 
     def __init__(self, table_name: str='', **values):
         super().__init__(table_name)
@@ -350,7 +353,7 @@ class Select(SQLObject):
         if not foreign_field:
             foreign_field, primary_key = ForeignKey.find(other, self)
             if foreign_field:
-                if primary_key and not self.key_field:
+                if primary_key:
                     PrimaryKey.add(primary_key, self)
                 self.add(foreign_field, other)
                 return other
@@ -396,15 +399,52 @@ class Select(SQLObject):
 
     @classmethod
     def parse(cls, txt: str) -> list[SQLObject]:
-        import re
-        txt = re.sub(' +', ' ', re.sub('\n|\t', ' ', txt))
+        def find_last_word(pos: int) -> int:
+            SPACE, WORD = 1, 2
+            found = set()
+            for i in range(pos, 0, -1):
+                if txt[i] in [' ', '\t', '\n']:
+                    if sum(found) == 3:
+                        return i
+                    found.add(SPACE)
+                if txt[i].isalpha():
+                    found.add(WORD)
+                elif txt[i] == '.':
+                    found.remove(WORD)
+        def find_parenthesis(pos: int) -> int:
+            for i in range(pos, len(txt)-1):
+                if txt[i] == ')':
+                    return i+1
         if not cls.REGEX:
-            keywords = '|'.join(KEYWORD)
-            cls.REGEX = re.compile(f'({keywords})', re.IGNORECASE)
-        tokens = [t.strip() for t in cls.REGEX.split(txt) if t.strip()]
-        values = {k: v for k, v in zip(tokens[::2], tokens[1::2])}
-        tables = [t.strip() for t in re.split('JOIN|LEFT|RIGHT|ON', values[FROM]) if t.strip()]
+            keywords = '|'.join(k + r'\b' for k in KEYWORD)
+            flags = re.IGNORECASE + re.MULTILINE
+            cls.REGEX['keywords'] = re.compile(f'({keywords})', flags)
+            cls.REGEX['subquery'] = re.compile(r'(\w\.)*\w+ +in +\(SELECT.*?\)', flags)
         result = {}
+        found = cls.REGEX['subquery'].search(txt)
+        while found:
+            start, end = found.span()
+            inner = txt[start: end]
+            if inner.count('(') > inner.count(')'):
+                end = find_parenthesis(end)
+                inner = txt[start: end]
+            fld, *inner = re.split(r' IN | in', inner, maxsplit=1)
+            if fld.upper() == 'NOT':
+                pos = find_last_word(start)
+                fld = txt[pos: start].strip() # [To-Do] Use the value of `fld`
+                start = pos
+                class_type = NotSelectIN
+            else:
+                class_type = SelectIN
+            obj = class_type.parse(
+                ' '.join(re.sub(r'^\(', '', s.strip()) for s in inner)
+            )[0]
+            result[obj.alias] = obj
+            txt = txt[:start-1] + txt[end+1:]
+            found = cls.REGEX['subquery'].search(txt)
+        tokens = [t.strip() for t in cls.REGEX['keywords'].split(txt) if re.findall(r'\w+', t)]
+        values = {k.upper(): v for k, v in zip(tokens[::2], tokens[1::2])}
+        tables = [t.strip() for t in re.split('JOIN|LEFT|RIGHT|ON', values[FROM]) if t.strip()]
         for item in tables:
             if '=' in item:
                 a1, f1, a2, f2 = [r.strip() for r in re.split('[().=]', item) if r]
@@ -417,23 +457,55 @@ class Select(SQLObject):
                 for key in USUAL_KEYS:
                     if not key in values:
                         continue
-                    separator = KEYWORD[key][0].format(
-                        ' ' if key == WHERE else ''
-                    )
+                    separator = KEYWORD[key][0].format('')
                     fields = [
-                        fld.strip() for fld in re.split(
+                        Field.format(fld, obj)
+                        for fld in re.split(
                             separator, values[key]
                         ) if len(tables) == 1
-                        or re.findall(f'^[( ]*{obj.alias}.', fld)
+                        or re.findall(f'\b*{obj.alias}[.]', fld)
                     ]
-                    obj.values[key] = [
-                        f'{obj.alias}.{f}' if not '.' in f else f for f in fields
-                    ]
+                    obj.values[key] = [ f for f in fields if f.strip() ]
                 result[obj.alias] = obj
         return list( result.values() )
 
+class SelectIN(Select):
+    condition_class = Where
 
-class SubSelect(Select):
     def add(self, name: str, main: SQLObject):
         self.break_lines = False
-        Where.list(self).add(name, main)
+        self.condition_class.list(self).add(name, main)
+
+SubSelect = SelectIN
+
+class NotSelectIN(SelectIN):
+    condition_class = Not
+
+
+if __name__ == "__main__":
+    query_list = Select.parse("""
+        SELECT
+                cas.role,
+                m.title,
+                m.release_date,
+                a.name as actors_name
+        FROM
+                Actor a
+                LEFT JOIN Cast cas ON (a.cast = cas.id)
+                LEFT JOIN Movie m ON (cas.movie = m.id)
+        WHERE
+                m.genre NOT in (SELECT g.id from Genres g where g.name in ('sci-fi', 'horror', 'distopia'))
+                AND (m.hashtag = '#cult' OR m.awards LIKE '%Oscar%')
+                AND m.id IN (select DISTINCT r.movie FROM Review r GROUP BY r.movie HAVING Avg(r.rate) > 4.5)
+                AND a.age <= 69 AND a.age >= 45
+        ORDER BY
+                m.release_date
+    """)
+    for query in query_list:
+        descr = ' {} ({}) '.format(
+            query.table_name,
+            query.__class__.__name__
+        )
+        print(descr.center(50, '-'))
+        print(query)
+    print('='*50)

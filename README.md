@@ -40,7 +40,7 @@ You can specify your own alias:  `a = Select('Actor a')`
     3.2 -- Sub-queries:
 ```
 query = Select('Movie m', title=Field,
-    id=SubSelect(
+    id=SelectIN(
         'Review r',
         rate=Where.gt(4.5),
         movie_id=Distinct
@@ -71,12 +71,13 @@ query = Select('Movie m', title=Field,
 
 3.4 -- Negative conditions use the _Not_ class instead of _Where_
 ```
-franchise
 based_on_book=Not.is_null()
 ```
 
 3.5 -- List of values
+```
 hash_tag=Where.list(['space', 'monster', 'gore'])
+```
 
 ---
 ### 4 - A field can be two things at the same time:
@@ -85,7 +86,7 @@ hash_tag=Where.list(['space', 'monster', 'gore'])
     - This means that the field will appear in the results and also that the query will be ordered by that field.
 * Applying **GROUP BY** to item 3.2, it would look like this:
     ```    
-    SubSelect(
+    SelectIN(
         'Review r', movie=[GroupBy, Distinct],
         rate=Having.avg(Where.gt(4.5))
     )
@@ -267,7 +268,7 @@ m = Select...
 
 9.3
 ```
-best_movies = SubSelect(
+best_movies = SelectIN(
     Review=Table('role'),
     rate=[GroupBy, Having.avg(Where.gt(4.5))]
 )
@@ -287,13 +288,13 @@ m2 = Select(
 ---
 
 ### 10 - CASE...WHEN...THEN
-Select(
-    'Product',
-    label=Case('price').when(
-        lt(50), 'cheap'
-    ).when(
-        gt(100), 'expensive'
-    ).else_value(
-        'normal'
+    Select(
+        'Product',
+        label=Case('price').when(
+            lt(50), 'cheap'
+        ).when(
+            gt(100), 'expensive'
+        ).else_value(
+            'normal'
+        )
     )
-)
