@@ -81,3 +81,19 @@ def many_texts_to_objects():
         WHERE ( m.genre = 'Sci-Fi' OR m.awards LIKE '%Oscar%' ) GROUP BY director
     """)[0]
     return actor, cast, movie
+
+def two_queries_same_table() -> Select:
+    txt1 = """SELECT p.name, p.category
+    ,p.price,p.promotional FROM product p
+        where p.category in (6,14,29,35,78)
+    AND p.Status = p.last_st ORDER BY p.EAN"""
+    txt2 = """select stock_amount, EAN,Name       ,expiration_date
+    from PRODUCT where price < 357.46 and status = Last_ST order by ean"""
+    return Select.parse(txt1)[0] + Select.parse(txt2)[0]
+
+def select_product() -> Select:
+    return Select(
+        Product=Table('name,promotional,stock_amount,expiration_date'),
+        category=[Where.list([6,14,29,35,78]),Field], EAN=[Field, OrderBy],
+        price=[Where.lt(357.46),Field], status=Where('= Last_st')
+    )

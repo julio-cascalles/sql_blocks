@@ -2,14 +2,27 @@ from enum import Enum
 import re
 
 
+PATTERN_PREFIX = '([^0-9 ]+[.])'
+PATTERN_SUFFIX = '( [A-Za-z_]+)'
+SUFFIX_AND_PRE = f'{PATTERN_SUFFIX}|{PATTERN_PREFIX}'
+DISTINCT_SF_PR = f'(DISTINCT|distinct)|{SUFFIX_AND_PRE}'
+
 KEYWORD = {
-    'SELECT': (',{}', 'SELECT *'),
-    'FROM': ('{}', ''),
-    'WHERE': ('{}AND ', ''),
-    'GROUP BY': (',{}', ''),
-    'ORDER BY': (',{}', ''),
-    'LIMIT': (' ', ''),
+    'SELECT': (',{}', 'SELECT *', DISTINCT_SF_PR),
+    'FROM': ('{}', '', PATTERN_SUFFIX),
+    'WHERE': ('{}AND ', '', PATTERN_PREFIX),
+    'GROUP BY': (',{}', '', SUFFIX_AND_PRE),
+    'ORDER BY': (',{}', '', SUFFIX_AND_PRE),
+    'LIMIT': (' ', '', ''),
 }
+#             ^     ^        ^
+#             |     |        |
+#             |     |        +----- pattern to compare fields
+#             |     |
+#             |     +----- default when empty (SELECT * ...)
+#             |
+#             +-------- separator
+
 SELECT, FROM, WHERE, GROUP_BY, ORDER_BY, LIMIT = KEYWORD.keys()
 USUAL_KEYS = [SELECT, WHERE, GROUP_BY, ORDER_BY]
 
@@ -39,6 +52,26 @@ class SQLObject:
     def table_name(self) -> str:
         return self.values[FROM][0].split()[0]
  
+    @staticmethod
+    def get_separator(key: str) -> str:
+        appendix = {WHERE: 'and|', FROM: 'join|JOIN'}
+        return KEYWORD[key][0].format(appendix.get(key, ''))
+
+    def diff(self, key: str, search_list: list, symmetrical: bool=False) -> set:
+        pattern = KEYWORD[key][2]
+        separator = self.get_separator(key)
+        def field_set(source: list) -> set:
+            return set(
+                re.sub(pattern, '', fld.strip()).lower()
+                for string in source
+                for fld in re.split(separator, string)
+            )       
+        s1 = field_set(search_list)
+        s2 = field_set(self.values.get(key, []))
+        if symmetrical:
+            return s1.symmetric_difference(s2)
+        return s1 - s2
+
     def delete(self, search: str, keys: list=USUAL_KEYS):
         for key in keys:
             result = []
@@ -329,13 +362,12 @@ class Select(SQLObject):
         self.__call__(**values)
         self.break_lines = True
 
+    def update_values(self, key: str, new_values: list):
+        for value in self.diff(key, new_values):
+            self.values.setdefault(key, []).append(value)
+
     def add(self, name: str, main: SQLObject):
-        def update_values(key: str, new_values: list):
-            for value in new_values:
-                old_values = main.values.get(key, [])
-                if value not in old_values:
-                    main.values[key] = old_values + [value]
-        update_values(
+        main.update_values(
             FROM, [
                 '{jt}JOIN {tb} {a2} ON ({a1}.{f1} = {a2}.{f2})'.format(
                     jt=self.join_type.value,
@@ -346,9 +378,13 @@ class Select(SQLObject):
             ] + self.values[FROM][1:]
         )
         for key in USUAL_KEYS:
-            update_values(key, self.values.get(key, []))
+            main.update_values(key, self.values.get(key, []))
 
     def __add__(self, other: SQLObject):
+        if self.table_name.lower() == other.table_name.lower():
+            for key in USUAL_KEYS:
+                self.update_values(key, other.values.get(key, []))
+            return self
         foreign_field, primary_key = ForeignKey.find(self, other)
         if not foreign_field:
             foreign_field, primary_key = ForeignKey.find(other, self)
@@ -383,10 +419,8 @@ class Select(SQLObject):
         return self
 
     def __eq__(self, other: SQLObject) -> bool:
-        def sorted_values(obj: SQLObject, key: str) -> list:
-            return sorted(obj.values.get(key, []))
         for key in KEYWORD:
-            if sorted_values(self, key) != sorted_values(other, key):
+            if self.diff(key, other.values.get(key, []), True):
                 return False
         return True
 
@@ -427,7 +461,7 @@ class Select(SQLObject):
             inner = txt[start: end]
             if inner.count('(') > inner.count(')'):
                 end = find_parenthesis(end)
-                inner = txt[start: end]
+                inner = txt[start: end-1]
             fld, *inner = re.split(r' IN | in', inner, maxsplit=1)
             if fld.upper() == 'NOT':
                 pos = find_last_word(start)
@@ -457,15 +491,12 @@ class Select(SQLObject):
                 for key in USUAL_KEYS:
                     if not key in values:
                         continue
-                    separator = KEYWORD[key][0].format('')
-                    fields = [
+                    separator = cls.get_separator(key)
+                    obj.values[key] = [
                         Field.format(fld, obj)
-                        for fld in re.split(
-                            separator, values[key]
-                        ) if len(tables) == 1
-                        or re.findall(f'\b*{obj.alias}[.]', fld)
+                        for fld in re.split(separator, values[key])
+                        if len(tables) == 1 or re.findall(f'\b*{obj.alias}[.]', fld)
                     ]
-                    obj.values[key] = [ f for f in fields if f.strip() ]
                 result[obj.alias] = obj
         return list( result.values() )
 
