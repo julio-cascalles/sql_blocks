@@ -511,32 +511,3 @@ SubSelect = SelectIN
 
 class NotSelectIN(SelectIN):
     condition_class = Not
-
-
-if __name__ == "__main__":
-    query_list = Select.parse("""
-        SELECT
-                cas.role,
-                m.title,
-                m.release_date,
-                a.name as actors_name
-        FROM
-                Actor a
-                LEFT JOIN Cast cas ON (a.cast = cas.id)
-                LEFT JOIN Movie m ON (cas.movie = m.id)
-        WHERE
-                m.genre NOT in (SELECT g.id from Genres g where g.name in ('sci-fi', 'horror', 'distopia'))
-                AND (m.hashtag = '#cult' OR m.awards LIKE '%Oscar%')
-                AND m.id IN (select DISTINCT r.movie FROM Review r GROUP BY r.movie HAVING Avg(r.rate) > 4.5)
-                AND a.age <= 69 AND a.age >= 45
-        ORDER BY
-                m.release_date
-    """)
-    for query in query_list:
-        descr = ' {} ({}) '.format(
-            query.table_name,
-            query.__class__.__name__
-        )
-        print(descr.center(50, '-'))
-        print(query)
-    print('='*50)

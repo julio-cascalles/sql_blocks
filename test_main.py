@@ -1,17 +1,20 @@
 from tests.tests import (
     best_movies, single_text_to_objects,
     detached_objects, many_texts_to_objects,
-    query_reference, two_queries_same_table, select_product
+    query_reference, two_queries_same_table,
+    select_product, extract_subqueries
 )
 
-b = best_movies()
+_best_movies = best_movies()
 query = {}
 expected_result = query_reference()
+subqueries = extract_subqueries()
+
 
 for func in [single_text_to_objects, detached_objects, many_texts_to_objects]:
     a, c, m = func()
     m.delete('director')
-    m = m(id=b)
+    m = m(id=_best_movies)
     query[func.__name__] = a + (m + c)
 
 
@@ -28,3 +31,10 @@ def test_same_table():
     p1 = two_queries_same_table()
     p2 = select_product()
     assert p1 == p2
+
+def test_subquery_Genres():
+    g = subqueries['Genres']
+    assert g.__class__.__name__ == 'NotSelectIN'
+    
+def test_subquery_Review():
+    assert subqueries['Review'] == _best_movies

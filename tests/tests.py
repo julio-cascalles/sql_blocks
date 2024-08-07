@@ -4,8 +4,8 @@ from sql_blocks.sql_blocks import *
 Select.join_type = JoinType.LEFT
 OrderBy.sort = SortType.DESC
 
-def best_movies() -> SubSelect:
-    return SubSelect(
+def best_movies() -> SelectIN:
+    return SelectIN(
         'Review r',  movie=[GroupBy, Distinct], rate=Having.avg(Where.gt(4.5))
     )
 
@@ -35,7 +35,7 @@ def query_reference() -> Select:
                 'Movie m', title=Field,
                 release_date=[OrderBy, Field],
                 id=[
-                    SubSelect(
+                    SelectIN(
                         'Review r', movie=[GroupBy, Distinct],
                         rate=Having.avg(Where.gt(4.5))
                     ),
@@ -48,8 +48,15 @@ def query_reference() -> Select:
         name=NamedField('actors_name'),
     ) # ----------- Actor
 
-def single_text_to_objects():
-    return Select.parse('''
+SINGLE_CONDITION_GENRE = "( m.genre = 'Sci-Fi' OR m.awards LIKE '%Oscar%' )"
+SUB_QUERIES_CONDITIONS = """
+    m.genre NOT in (SELECT g.id from Genres g where g.name in ('sci-fi', 'horror', 'distopia'))
+    AND (m.hashtag = '#cult' OR m.awards LIKE '%Oscar%')
+    AND m.id IN (select DISTINCT r.movie FROM Review r GROUP BY r.movie HAVING Avg(r.rate) > 4.5)
+"""
+
+def single_text_to_objects(conditions: str=SINGLE_CONDITION_GENRE):
+    return Select.parse(f'''
         SELECT
                 cas.role,
                 m.title,
@@ -60,7 +67,7 @@ def single_text_to_objects():
                 LEFT JOIN Cast cas ON (a.cast = cas.id)
                 LEFT JOIN Movie m ON (cas.movie = m.id)
         WHERE
-                ( m.genre = 'Sci-Fi' OR m.awards LIKE '%Oscar%' )
+                {conditions}
                 AND a.age <= 69 AND a.age >= 45
         ORDER BY
                 m.release_date DESC
@@ -97,3 +104,7 @@ def select_product() -> Select:
         category=[Where.list([6,14,29,35,78]),Field], EAN=[Field, OrderBy],
         price=[Where.lt(357.46),Field], status=Where('= Last_st')
     )
+
+def extract_subqueries() -> dict:
+    query_list = single_text_to_objects(SUB_QUERIES_CONDITIONS)
+    return {query.table_name: query for query in query_list}
