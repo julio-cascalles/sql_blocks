@@ -301,4 +301,33 @@ m2 = Select(
 
 ---
 
-### 11 - optimize
+### 11 - optimize method
+    p1 = Select.parse("""
+            SELECT * FROM Product p
+            WHERE (p.category = 'Gizmo'
+                    OR p.category = 'Gadget'
+                    OR p.category = 'Doohickey')
+                AND NOT price <= 387.64
+                AND YEAR(last_sale) = 2024
+            ORDER BY
+                category
+        """)[0]
+        p1.optimize() #  <<===============
+        p2 = Select.parse("""
+            SELECT category FROM Product p
+            WHERE category IN ('Gizmo','Gadget','Doohickey')
+                and p.price > 387.64
+                and p.last_sale >= '2024-01-01'
+                and p.last_sale <= '2024-12-31'
+            ORDER BY p.category LIMIT 100
+        """)[0]
+        p1 == p2 # --- True!
+
+ This will...
+* Replace `OR` conditions to `SELECT IN ...`
+* Put `LIMIT` if no fields or conditions defined;
+* Normalizes inverted conditions;
+* Auto includes fields present in `ORDER/GROUP BY`;
+* Replace `YEAR` function with date range comparison.
+
+> The method allows you to select which rules you want to apply in the optimization...Or define your own rules!
