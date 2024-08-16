@@ -10,26 +10,32 @@ DISTINCT_SF_PR = f'(DISTINCT|distinct)|{SUFFIX_AND_PRE}'
 KEYWORD = {
     'SELECT': (',{}', 'SELECT *', DISTINCT_SF_PR),
     'FROM': ('{}', '', PATTERN_SUFFIX),
-    'WHERE': ('{}AND ', '', PATTERN_PREFIX),
+    'WHERE': ('{}AND ', '', f'{PATTERN_PREFIX}| '),
     'GROUP BY': (',{}', '', SUFFIX_AND_PRE),
     'ORDER BY': (',{}', '', SUFFIX_AND_PRE),
     'LIMIT': (' ', '', ''),
 }
-#             ^     ^        ^
-#             |     |        |
-#             |     |        +----- pattern to compare fields
-#             |     |
-#             |     +----- default when empty (SELECT * ...)
-#             |
-#             +-------- separator
+#              ^    ^        ^
+#              |    |        |
+#              |    |        +----- pattern to compare fields
+#              |    |
+#              |    +----- default when empty (SELECT * ...)
+#              |
+#              +-------- separator
 
 SELECT, FROM, WHERE, GROUP_BY, ORDER_BY, LIMIT = KEYWORD.keys()
 USUAL_KEYS = [SELECT, WHERE, GROUP_BY, ORDER_BY]
 
 
 class SQLObject:
+    ALIAS_FUNC = lambda t: t.lower()[:3]
+    """    ^^^^^^^^^^^^^^^^^^^^^^^^
+    You can change the behavior by assigning 
+    a user function to SQLObject.ALIAS_FUNC
+    """
+
     def __init__(self, table_name: str=''):
-        self.alias = ''
+        self.__alias = ''
         self.values = {}
         self.key_field = ''
         self.set_table(table_name)
@@ -37,20 +43,26 @@ class SQLObject:
     def set_table(self, table_name: str):
         if not table_name:
             return
-        if ' ' in table_name:
-            table_name, self.alias = table_name.split()
+        if ' ' in table_name.strip():
+            table_name, self.__alias = table_name.split()
         elif '_' in table_name:
-            self.alias = ''.join(
+            self.__alias = ''.join(
                 word[0].lower()
                 for word in table_name.split('_')
             )
         else:
-            self.alias = table_name.lower()[:3]
+            self.__alias = SQLObject.ALIAS_FUNC(table_name)
         self.values.setdefault(FROM, []).append(f'{table_name} {self.alias}')
 
     @property
     def table_name(self) -> str:
         return self.values[FROM][0].split()[0]
+    
+    @property
+    def alias(self) -> str:
+        if self.__alias:
+            return self.__alias
+        return self.table_name
  
     @staticmethod
     def get_separator(key: str) -> str:
@@ -90,9 +102,9 @@ class Field:
     @classmethod
     def format(cls, name: str, main: SQLObject) -> str:
         name = name.strip()
-        if name == '_':
+        if name in ('_', '*'):
             name = '*'
-        elif '.' not in name:
+        elif not re.findall('[.()]', name):
             name = f'{main.alias}.{name}'
         if Function in cls.__bases__:
             name = f'{cls.__name__}({name})'
@@ -185,7 +197,7 @@ class Where:
     prefix = ''
 
     def __init__(self, expr: str):
-        self.expr = f'{self.prefix}{expr}'
+        self.expr = expr
 
     @classmethod
     def __constructor(cls, operator: str, value):
@@ -226,8 +238,8 @@ class Where:
         return cls(f'IN ({values})')
 
     def add(self, name: str, main: SQLObject):
-        main.values.setdefault(WHERE, []).append('{} {}'.format(
-            Field.format(name, main), self.expr
+        main.values.setdefault(WHERE, []).append('{}{} {}'.format(
+            self.prefix, Field.format(name, main), self.expr
         ))
 
 
@@ -347,6 +359,12 @@ class Having:
         return cls(Count, condition)
 
 
+class Rule:
+    @classmethod
+    def apply(cls, target: 'Select'):
+        ...
+
+
 class JoinType(Enum):
     INNER = ''
     LEFT = 'LEFT '
@@ -424,12 +442,15 @@ class Select(SQLObject):
                 return False
         return True
 
-    def limit(self, row_count: int, offset: int=0):
+    def limit(self, row_count: int=100, offset: int=0):
         result = [str(row_count)]
         if offset > 0:
             result.append(f'OFFSET {offset}')
         self.values.setdefault(LIMIT, result)
         return self
+
+    def match(self, expr: str) -> bool:
+        return re.findall(f'\b*{self.alias}[.]', expr) != []
 
     @classmethod
     def parse(cls, txt: str) -> list[SQLObject]:
@@ -452,7 +473,7 @@ class Select(SQLObject):
         if not cls.REGEX:
             keywords = '|'.join(k + r'\b' for k in KEYWORD)
             flags = re.IGNORECASE + re.MULTILINE
-            cls.REGEX['keywords'] = re.compile(f'({keywords})', flags)
+            cls.REGEX['keywords'] = re.compile(f'({keywords}|[*])', flags)
             cls.REGEX['subquery'] = re.compile(r'(\w\.)*\w+ +in +\(SELECT.*?\)', flags)
         result = {}
         found = cls.REGEX['subquery'].search(txt)
@@ -476,7 +497,7 @@ class Select(SQLObject):
             result[obj.alias] = obj
             txt = txt[:start-1] + txt[end+1:]
             found = cls.REGEX['subquery'].search(txt)
-        tokens = [t.strip() for t in cls.REGEX['keywords'].split(txt) if re.findall(r'\w+', t)]
+        tokens = [t.strip() for t in cls.REGEX['keywords'].split(txt) if t.strip()]
         values = {k.upper(): v for k, v in zip(tokens[::2], tokens[1::2])}
         tables = [t.strip() for t in re.split('JOIN|LEFT|RIGHT|ON', values[FROM]) if t.strip()]
         for item in tables:
@@ -495,10 +516,17 @@ class Select(SQLObject):
                     obj.values[key] = [
                         Field.format(fld, obj)
                         for fld in re.split(separator, values[key])
-                        if len(tables) == 1 or re.findall(f'\b*{obj.alias}[.]', fld)
+                        if (fld != '*' and len(tables) == 1) or obj.match(fld)
                     ]
                 result[obj.alias] = obj
         return list( result.values() )
+
+    def optimize(self, rules: list[Rule]=None):
+        if not rules:
+            rules = Rule.__subclasses__()
+        for rule in rules:
+            rule.apply(self)
+
 
 class SelectIN(Select):
     condition_class = Where
@@ -511,3 +539,78 @@ SubSelect = SelectIN
 
 class NotSelectIN(SelectIN):
     condition_class = Not
+
+
+class RuleSelectIN(Rule):
+    @classmethod
+    def apply(cls, target: Select):
+        for i, condition in enumerate(target.values[WHERE]):
+            tokens = re.split(' or | OR ', re.sub('\n|\t|[()]', ' ', condition))
+            if len(tokens) < 2:
+                continue
+            fields = [t.split('=')[0].split('.')[-1].lower().strip() for t in tokens]
+            if len(set(fields)) == 1:
+                target.values[WHERE][i] = '{} IN ({})'.format(
+                    Field.format(fields[0], target),
+                    ','.join(t.split('=')[-1].strip() for t in tokens)
+                )
+
+class RuleAutoField(Rule):
+    @classmethod
+    def apply(cls, target: Select):
+        if target.values.get(GROUP_BY):
+            target.values[SELECT] = target.values[GROUP_BY]
+            target.values[ORDER_BY] = []
+        elif target.values.get(ORDER_BY):
+            s1 = set(target.values.get(SELECT, []))
+            s2 = set(target.values[ORDER_BY])
+            target.values.setdefault(SELECT, []).extend( list(s2-s1) )
+
+class RuleLogicalOp(Rule):
+    REVERSE = {
+        ">=": "<",
+        "<=": ">",
+        "<>": "=",
+        "=": "<>"
+    }
+    @classmethod
+    def apply(cls, target: Select):
+        REGEX = re.compile('({})'.format(
+            '|'.join(cls.REVERSE)
+        ))
+        for i, condition in enumerate(target.values.get(WHERE, [])):
+            expr = re.sub('\n|\t', ' ', condition)
+            tokens = [t for t in re.split(r'(NOT\b|not\b)',expr) if t.strip()]
+            if len(tokens) < 2 or not REGEX.findall(tokens[-1]):
+                continue
+            tokens = REGEX.split(tokens[-1])
+            tokens[1] = cls.REVERSE[tokens[1]]
+            target.values[WHERE][i] = ' '.join(tokens)
+
+class RulePutLimit(Rule):
+    @classmethod
+    def apply(cls, target: Select):
+        need_limit = any(not target.values.get(key) for key in (WHERE, SELECT))
+        if need_limit:
+            target.limit()
+
+class RuleDateFuncReplace(Rule):
+    """
+    SQL algorithm by Ralff Matias
+    """
+    REGEX = re.compile(r'(\bYEAR[(]|\byear[(]|=|[)])')
+
+    @classmethod
+    def apply(cls, target: Select):
+        for i, condition in enumerate(target.values.get(WHERE, [])):
+            tokens = [
+                t.strip() for t in cls.REGEX.split(condition) if t.strip()
+            ]
+            if len(tokens) < 3:
+                continue
+            func, field, *rest, year = tokens
+            if not re.findall('(YEAR|year)[(]', func):
+                continue
+            temp = Select(f'{target.table_name} {target.alias}')
+            Between(f'{year}-01-01', f'{year}-12-31').add(field, temp)
+            target.values[WHERE][i] = ' AND '.join(temp.values[WHERE])
