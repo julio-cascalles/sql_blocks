@@ -9,7 +9,8 @@ from tests.rules import (
     optimized_auto_field,
     optimized_logical_op,
     optimized_limit,
-    optimized_date_func
+    optimized_date_func,
+    all_optimizations
 )
 
 _best_movies = best_movies()
@@ -60,3 +61,6 @@ def test_rule_put_limit():
 
 def test_rule_date_func_replace():
     assert optimized_date_func()
+
+def test_all_optimizations():
+    assert all_optimizations()

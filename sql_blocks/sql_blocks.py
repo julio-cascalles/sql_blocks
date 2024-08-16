@@ -24,7 +24,7 @@ KEYWORD = {
 #              +-------- separator
 
 SELECT, FROM, WHERE, GROUP_BY, ORDER_BY, LIMIT = KEYWORD.keys()
-USUAL_KEYS = [SELECT, WHERE, GROUP_BY, ORDER_BY]
+USUAL_KEYS = [SELECT, WHERE, GROUP_BY, ORDER_BY, LIMIT]
 
 
 class SQLObject:
@@ -104,7 +104,7 @@ class Field:
         name = name.strip()
         if name in ('_', '*'):
             name = '*'
-        elif not re.findall('[.()]', name):
+        elif not re.findall('[.()0-9]', name):
             name = f'{main.alias}.{name}'
         if Function in cls.__bases__:
             name = f'{cls.__name__}({name})'
@@ -541,6 +541,13 @@ class NotSelectIN(SelectIN):
     condition_class = Not
 
 
+class RulePutLimit(Rule):
+    @classmethod
+    def apply(cls, target: Select):
+        need_limit = any(not target.values.get(key) for key in (WHERE, SELECT))
+        if need_limit:
+            target.limit()
+
 class RuleSelectIN(Rule):
     @classmethod
     def apply(cls, target: Select):
@@ -587,13 +594,6 @@ class RuleLogicalOp(Rule):
             tokens[1] = cls.REVERSE[tokens[1]]
             target.values[WHERE][i] = ' '.join(tokens)
 
-class RulePutLimit(Rule):
-    @classmethod
-    def apply(cls, target: Select):
-        need_limit = any(not target.values.get(key) for key in (WHERE, SELECT))
-        if need_limit:
-            target.limit()
-
 class RuleDateFuncReplace(Rule):
     """
     SQL algorithm by Ralff Matias
@@ -609,8 +609,6 @@ class RuleDateFuncReplace(Rule):
             if len(tokens) < 3:
                 continue
             func, field, *rest, year = tokens
-            if not re.findall('(YEAR|year)[(]', func):
-                continue
             temp = Select(f'{target.table_name} {target.alias}')
             Between(f'{year}-01-01', f'{year}-12-31').add(field, temp)
             target.values[WHERE][i] = ' AND '.join(temp.values[WHERE])
