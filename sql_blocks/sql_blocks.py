@@ -10,7 +10,7 @@ DISTINCT_SF_PR = f'(DISTINCT|distinct)|{SUFFIX_AND_PRE}'
 KEYWORD = {
     'SELECT': (',{}', 'SELECT *', DISTINCT_SF_PR),
     'FROM': ('{}', '', PATTERN_SUFFIX),
-    'WHERE': ('{}AND ', '', f'{PATTERN_PREFIX}| '),
+    'WHERE': ('{}AND ', '', ''),
     'GROUP BY': (',{}', '', SUFFIX_AND_PRE),
     'ORDER BY': (',{}', '', SUFFIX_AND_PRE),
     'LIMIT': (' ', '', ''),
@@ -70,11 +70,17 @@ class SQLObject:
         return KEYWORD[key][0].format(appendix.get(key, ''))
 
     def diff(self, key: str, search_list: list, symmetrical: bool=False) -> set:
-        pattern = KEYWORD[key][2]
+        def cleanup(fld: str) -> str:
+            if symmetrical:
+                fld = fld.lower()
+            return fld.strip()
+        pattern = KEYWORD[key][2] 
+        if key == WHERE and symmetrical:
+            pattern = f'{PATTERN_PREFIX}| '
         separator = self.get_separator(key)
         def field_set(source: list) -> set:
             return set(
-                re.sub(pattern, '', fld.strip()).lower()
+                re.sub(pattern, '', cleanup(fld))
                 for string in source
                 for fld in re.split(separator, string)
             )       
@@ -385,16 +391,17 @@ class Select(SQLObject):
             self.values.setdefault(key, []).append(value)
 
     def add(self, name: str, main: SQLObject):
-        main.update_values(
-            FROM, [
-                '{jt}JOIN {tb} {a2} ON ({a1}.{f1} = {a2}.{f2})'.format(
-                    jt=self.join_type.value,
-                    tb=self.table_name,
-                    a1=main.alias, f1=name,
-                    a2=self.alias, f2=self.key_field
-                )
-            ] + self.values[FROM][1:]
-        )
+        new_tables = [
+            '{jt}JOIN {tb} {a2} ON ({a1}.{f1} = {a2}.{f2})'.format(
+                jt=self.join_type.value,
+                tb=self.table_name,
+                a1=main.alias, f1=name,
+                a2=self.alias, f2=self.key_field
+            )
+        ]
+        if new_tables not in main.values.get(FROM, []):
+            new_tables += self.values[FROM][1:]
+            main.values.setdefault(FROM, []).extend(new_tables)
         for key in USUAL_KEYS:
             main.update_values(key, self.values.get(key, []))
 

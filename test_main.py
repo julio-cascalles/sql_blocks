@@ -64,3 +64,7 @@ def test_rule_date_func_replace():
 
 def test_all_optimizations():
     assert all_optimizations()
+
+
+if __name__ == "__main__":
+    print(query_reference())
