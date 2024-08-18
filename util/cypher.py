@@ -1,6 +1,12 @@
 from enum import Enum
 import re
+########################################
 from sql_blocks.sql_blocks import *
+#        ^
+#        |
+#        +------ pip install sql_blocks
+#
+########################################
 
 
 class TokenType(Enum):
@@ -11,6 +17,10 @@ class TokenType(Enum):
     F_KEY = 5
 
 class Cypher:
+    """
+    Cyphe Syntax:
+    {Table} ( {field} ? {condition} , {field} ) -> {Foreign_Table} ( {foreign_field} ... )
+    """
     def __init__(self, cmd: str):
         SQLObject.ALIAS_FUNC = lambda t: t[0].lower()
         self.queries = []
@@ -57,6 +67,7 @@ class Cypher:
 
 
 if __name__ == "__main__":
+    # ---- [pt-BR example] -----------------
     CYPHER_QUERY = "Pais(nome?PIB > 1000,sigla)->Bandeira(pais, cor)->Cor(hexa?nome = 'Vermelho')"
     print('='*100)
     print('  Extraindo e combinando 3 queries do comando CYPHER:  '.center(100, '#'))
@@ -72,3 +83,4 @@ if __name__ == "__main__":
     print('-'*100)
     print(p + (b + c))
     print('='*100)
+    # -----------------------------------//
