@@ -44,7 +44,6 @@ class Cypher:
                         raise SyntaxError('Invalid comma in expression.')
                 case ')':
                     tt = TokenType.TABLE
-                    table = ''
                 case '->':
                     tt = TokenType.LJOIN
                 case _:
