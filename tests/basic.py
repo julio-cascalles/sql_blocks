@@ -110,17 +110,29 @@ def extract_subqueries() -> dict:
     query_list = single_text_to_objects(SUB_QUERIES_CONDITIONS)
     return {query.table_name: query for query in query_list}
 
-EXPR_TEST = 'extract(year from due_date) as year_ref'
+DATE_FUNC = 'extract(year from %)'
+FLD_ALIAS = 'year_ref'
+EXPR_ARR1 = [
+    DATE_FUNC.replace('%', 'due_date')
+]
+EXPR_ARR2 = EXPR_ARR1 + [FLD_ALIAS]
 
-def expected_expression_field(query: Select, txt1: str=EXPR_TEST) -> bool:
+def select_expression_field(use_alias: bool) -> Select:
+    TABLE = 'Product'
+    if use_alias:
+        return Select(
+            TABLE,
+            due_date=NamedField(
+                FLD_ALIAS,
+                ExpressionField(DATE_FUNC)
+            )
+        )
+    return Select(TABLE, due_date=ExpressionField(DATE_FUNC))
+
+def is_expected_expression(query: Select, elements: list) -> bool:
+    txt1 = ' as '.join(elements)
     for i, field in enumerate(query.values[SELECT]):
         if i > 0:
             return False
         txt2 = field.lower()
     return SequenceMatcher(None, txt1, txt2).ratio() > 0.66
-
-def select_expression_field() -> Select:
-    return Select(
-        'Product',
-        due_date=NamedField('YEAR_ref', ExpressionField('extract(year from %)'))
-    )

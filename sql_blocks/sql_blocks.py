@@ -157,7 +157,7 @@ class ExpressionField:
         self.expr = expr
 
     def add(self, name: str, main: SQLObject):
-        main.values.setdefault(SELECT, []).append(self.format)
+        main.values.setdefault(SELECT, []).append(self.format(name, main))
 
     def format(self, name: str, main: SQLObject) -> str:
         return self.expr.replace('%', Field.format(name, main))

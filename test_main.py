@@ -3,7 +3,8 @@ from tests.basic import (
     detached_objects, many_texts_to_objects,
     query_reference, two_queries_same_table,
     select_product, extract_subqueries,
-    select_expression_field, expected_expression_field
+    select_expression_field, is_expected_expression, 
+    EXPR_ARR1, EXPR_ARR2
 )
 from tests.rules import (
     optimized_select_in,
@@ -67,8 +68,13 @@ def test_all_optimizations():
     assert all_optimizations()
 
 def test_expression_field():
-    assert expected_expression_field(
-        select_expression_field()
+    assert is_expected_expression(
+        select_expression_field(False), EXPR_ARR1
+    )
+
+def test_named_expr_fld():
+    assert is_expected_expression(
+        select_expression_field(True), EXPR_ARR2
     )
 
 
