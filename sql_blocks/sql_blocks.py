@@ -141,17 +141,26 @@ class Distinct(Field):
 class NamedField:
     def __init__(self, alias: str, class_type = Field):
         self.alias = alias
-        if class_type not in [Field] + Field.__subclasses__():
-            raise TypeError('class_type must be a Field (sub)class.')
         self.class_type = class_type
 
     def add(self, name: str, main: SQLObject):
         main.values.setdefault(SELECT, []).append(
             '{} as {}'.format(
                 self.class_type.format(name, main),
-                self.alias
+                self.alias  # --- field alias
             )
         )
+
+
+class ExpressionField:
+    def __init__(self, expr: str):
+        self.expr = expr
+
+    def add(self, name: str, main: SQLObject):
+        main.values.setdefault(SELECT, []).append(self.format)
+
+    def format(self, name: str, main: SQLObject) -> str:
+        return self.expr.replace('%', Field.format(name, main))
 
 
 class Table:

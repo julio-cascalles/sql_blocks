@@ -1,4 +1,5 @@
 from sql_blocks.sql_blocks import *
+from difflib import SequenceMatcher
 
 
 Select.join_type = JoinType.LEFT
@@ -108,3 +109,18 @@ def select_product() -> Select:
 def extract_subqueries() -> dict:
     query_list = single_text_to_objects(SUB_QUERIES_CONDITIONS)
     return {query.table_name: query for query in query_list}
+
+EXPR_TEST = 'extract(year from due_date) as year_ref'
+
+def expected_expression_field(query: Select, txt1: str=EXPR_TEST) -> bool:
+    for i, field in enumerate(query.values[SELECT]):
+        if i > 0:
+            return False
+        txt2 = field.lower()
+    return SequenceMatcher(None, txt1, txt2).ratio() > 0.66
+
+def select_expression_field() -> Select:
+    return Select(
+        'Product',
+        due_date=NamedField('YEAR_ref', ExpressionField('extract(year from %)'))
+    )

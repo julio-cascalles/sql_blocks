@@ -2,7 +2,8 @@ from tests.basic import (
     best_movies, single_text_to_objects,
     detached_objects, many_texts_to_objects,
     query_reference, two_queries_same_table,
-    select_product, extract_subqueries
+    select_product, extract_subqueries,
+    select_expression_field, expected_expression_field
 )
 from tests.rules import (
     optimized_select_in,
@@ -64,6 +65,11 @@ def test_rule_date_func_replace():
 
 def test_all_optimizations():
     assert all_optimizations()
+
+def test_expression_field():
+    assert expected_expression_field(
+        select_expression_field()
+    )
 
 
 if __name__ == "__main__":

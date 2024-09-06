@@ -23,6 +23,20 @@ You can specify your own alias:  `a = Select('Actor a')`
         name=NamedField('actors_name', Distinct)
     )
 
+
+    2.1 -- Using expression as a field:
+```
+    Select(
+        'Product',
+        due_date=NamedField(
+            'YEAR_ref',
+            ExpressionField('extract(year from %)') #  <<---
+        )
+    )
+```
+...should return: 
+**SELECT extract(year from due_date) as YEAR_ref...**
+
 ---
 
 ### 3 - To set conditions, use **Where**:
