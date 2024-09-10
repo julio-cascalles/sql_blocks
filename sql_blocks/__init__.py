@@ -1,1 +1,1 @@
-from sql_blocks import *
+from sql_blocks.sql_blocks import *
