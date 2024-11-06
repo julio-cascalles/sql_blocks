@@ -14,6 +14,10 @@ from tests.rules import (
     optimized_date_func,
     all_optimizations
 )
+from tests.special_cases import (
+    error_inverted_condition, named_field_in_nested_query
+)
+
 
 _best_movies = best_movies()
 query = {}
@@ -77,6 +81,8 @@ def test_named_expr_fld():
         select_expression_field(True), EXPR_ARR2
     )
 
+def test_inverted_condition():
+    assert not error_inverted_condition()
 
-if __name__ == "__main__":
-    print(query_reference())
+def test_named_field_nested_query():
+    assert named_field_in_nested_query() == ['actors_name']

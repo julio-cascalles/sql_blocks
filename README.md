@@ -30,7 +30,7 @@ You can specify your own alias:  `a = Select('Actor a')`
         'Product',
         due_date=NamedField(
             'YEAR_ref',
-            ExpressionField('extract(year from %)') #  <<---
+            ExpressionField('extract(year from {f})') #  <<---
         )
     )
 ```
@@ -287,7 +287,7 @@ best_movies = SelectIN(
     rate=[GroupBy, Having.avg(Where.gt(4.5))]
 )
 m1 = Select(
-    Movie=Table('title,release_date),
+    Movie=Table('title,release_date'),
     id=best_movies
 )
 
@@ -305,9 +305,9 @@ m2 = Select(
     Select(
         'Product',
         label=Case('price').when(
-            lt(50), 'cheap'
+            Where.lt(50), 'cheap'
         ).when(
-            gt(100), 'expensive'
+            Where.gt(100), 'expensive'
         ).else_value(
             'normal'
         )

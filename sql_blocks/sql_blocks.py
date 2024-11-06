@@ -160,11 +160,20 @@ class ExpressionField:
         main.values.setdefault(SELECT, []).append(self.format(name, main))
 
     def format(self, name: str, main: SQLObject) -> str:
-        return self.expr.replace('%', Field.format(name, main))
+        """
+        Replace special chars...
+            {af}  or  {a.f} or % = alias and field
+            {a} = alias
+            {f} = field
+            {t} = table name
+        """
+        return re.sub('{af}|{a.f}|[%]', '{a}.{f}', self.expr).format(
+            a=main.alias, f=name, t=main.table_name
+        )
 
 
 class Table:
-    def __init__(self, fields: list | str=[]):
+    def __init__(self, fields: list=[]):
         if isinstance(fields, str):
             fields = [f.strip() for f in fields.split(',')]
         self.fields = fields
@@ -263,7 +272,7 @@ class Not(Where):
 
     @classmethod
     def eq(cls, value):
-        return Where.__constructor('<>', value)
+        return Where(expr=f'<> {quoted(value)}')
 
 
 class Case:
@@ -396,6 +405,8 @@ class Select(SQLObject):
         self.break_lines = True
 
     def update_values(self, key: str, new_values: list):
+        if key == SELECT:
+            new_values = [re.split(' as | AS ', val)[-1] for val in new_values]
         for value in self.diff(key, new_values):
             self.values.setdefault(key, []).append(value)
 
@@ -520,7 +531,7 @@ class Select(SQLObject):
             if '=' in item:
                 a1, f1, a2, f2 = [r.strip() for r in re.split('[().=]', item) if r]
                 obj1: SQLObject = result[a1]
-                obj2:SQLObject = result[a2]
+                obj2: SQLObject = result[a2]
                 PrimaryKey.add(f2, obj2)
                 ForeignKey(obj2.table_name).add(f1, obj1)
             else:
@@ -628,3 +639,15 @@ class RuleDateFuncReplace(Rule):
             temp = Select(f'{target.table_name} {target.alias}')
             Between(f'{year}-01-01', f'{year}-12-31').add(field, temp)
             target.values[WHERE][i] = ' AND '.join(temp.values[WHERE])
+
+
+if __name__ == "__main__":
+    query = Select(
+        'Cast c',
+        actor_id=Select(
+            'Actor a',
+            name=NamedField('actors_name'),
+            id=PrimaryKey
+        )
+    )
+    print(query)
