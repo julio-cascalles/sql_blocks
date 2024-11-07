@@ -5,10 +5,10 @@ import re
 PATTERN_PREFIX = '([^0-9 ]+[.])'
 PATTERN_SUFFIX = '( [A-Za-z_]+)'
 SUFFIX_AND_PRE = f'{PATTERN_SUFFIX}|{PATTERN_PREFIX}'
-DISTINCT_SF_PR = f'(DISTINCT|distinct)|{SUFFIX_AND_PRE}'
+DISTINCT_PREFX = f'(DISTINCT|distinct)|{PATTERN_PREFIX}'
 
 KEYWORD = {
-    'SELECT': (',{}', 'SELECT *', DISTINCT_SF_PR),
+    'SELECT': (',{}', 'SELECT *', DISTINCT_PREFX),
     'FROM': ('{}', '', PATTERN_SUFFIX),
     'WHERE': ('{}AND ', '', ''),
     'GROUP BY': (',{}', '', SUFFIX_AND_PRE),
@@ -74,6 +74,7 @@ class SQLObject:
             if symmetrical:
                 fld = fld.lower()
             return fld.strip()
+        # if key == SELECT and re.search(' as | AS ', fld)
         pattern = KEYWORD[key][2] 
         if key == WHERE and symmetrical:
             pattern = f'{PATTERN_PREFIX}| '
@@ -405,8 +406,6 @@ class Select(SQLObject):
         self.break_lines = True
 
     def update_values(self, key: str, new_values: list):
-        if key == SELECT:
-            new_values = [re.split(' as | AS ', val)[-1] for val in new_values]
         for value in self.diff(key, new_values):
             self.values.setdefault(key, []).append(value)
 
@@ -639,15 +638,3 @@ class RuleDateFuncReplace(Rule):
             temp = Select(f'{target.table_name} {target.alias}')
             Between(f'{year}-01-01', f'{year}-12-31').add(field, temp)
             target.values[WHERE][i] = ' AND '.join(temp.values[WHERE])
-
-
-if __name__ == "__main__":
-    query = Select(
-        'Cast c',
-        actor_id=Select(
-            'Actor a',
-            name=NamedField('actors_name'),
-            id=PrimaryKey
-        )
-    )
-    print(query)

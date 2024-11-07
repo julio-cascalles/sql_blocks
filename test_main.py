@@ -15,7 +15,9 @@ from tests.rules import (
     all_optimizations
 )
 from tests.special_cases import (
-    error_inverted_condition, named_field_in_nested_query
+    error_inverted_condition,
+    named_fields_in_nested_query,
+    first_name_from_expr_field
 )
 
 
@@ -84,5 +86,9 @@ def test_named_expr_fld():
 def test_inverted_condition():
     assert not error_inverted_condition()
 
-def test_named_field_nested_query():
-    assert named_field_in_nested_query() == ['actors_name']
+def test_named_fields_nested_query():
+    assert named_fields_in_nested_query() == ['name as actors_name']
+
+def test_complex_expression_field():
+    EXPECTED_FLD = " LEFT(Actor.name, POSITION(' ', a.name) ) AS first_name"
+    assert first_name_from_expr_field() == EXPECTED_FLD

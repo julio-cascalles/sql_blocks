@@ -9,7 +9,7 @@ def error_inverted_condition() -> set:
     query = Select('Actor a', **args)
     return query.diff(WHERE, [f"{VOICE_TYPE_FIELD} <> '{VOICE_TYPE_VALUE}'"], True)
 
-def named_field_in_nested_query() -> str:
+def named_fields_in_nested_query() -> list:
     query = Select(
         'Cast c',
         actor_id=Select(
@@ -19,3 +19,8 @@ def named_field_in_nested_query() -> str:
         )
     )
     return query.values[SELECT]
+
+def first_name_from_expr_field() -> str:
+    query = Select('Actor a')
+    field = ExpressionField(" LEFT({t}.{f}, POSITION(' ', {af}) ) AS first_{f}")
+    return field.format('name', query)
