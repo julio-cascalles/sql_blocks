@@ -87,7 +87,7 @@ def test_inverted_condition():
     assert not error_inverted_condition()
 
 def test_named_fields_nested_query():
-    assert named_fields_in_nested_query() == ['name as actors_name']
+    assert named_fields_in_nested_query() == ['a.name as actors_name']
 
 def test_complex_expression_field():
     EXPECTED_FLD = " LEFT(Actor.name, POSITION(' ', a.name) ) AS first_name"

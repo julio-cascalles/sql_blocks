@@ -74,14 +74,18 @@ class SQLObject:
             if symmetrical:
                 fld = fld.lower()
             return fld.strip()
-        # if key == SELECT and re.search(' as | AS ', fld)
+        def is_named_field(fld: str) -> bool:
+            return key == SELECT and re.search(' as | AS ', fld)
         pattern = KEYWORD[key][2] 
         if key == WHERE and symmetrical:
             pattern = f'{PATTERN_PREFIX}| '
         separator = self.get_separator(key)
         def field_set(source: list) -> set:
             return set(
-                re.sub(pattern, '', cleanup(fld))
+                (
+                    fld if is_named_field(fld) else
+                    re.sub(pattern, '', cleanup(fld))
+                )
                 for string in source
                 for fld in re.split(separator, string)
             )       
