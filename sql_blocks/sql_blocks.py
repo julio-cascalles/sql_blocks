@@ -176,17 +176,27 @@ class ExpressionField:
             a=main.alias, f=name, t=main.table_name
         )
 
+class FieldList:
+    separator = ','
 
-class Table:
-    def __init__(self, fields: list=[]):
+    def __init__(self, fields: list=[], class_types = [Field]):
         if isinstance(fields, str):
-            fields = [f.strip() for f in fields.split(',')]
+            fields = [
+                f.strip() for f in fields.split(self.separator)
+            ]
         self.fields = fields
+        self.class_types = class_types
 
     def add(self, name: str, main: SQLObject):
-        main.set_table(name)
         for field in self.fields:
-            Field.add(field, main)
+            for class_type in self.class_types:
+                class_type.add(field, main)
+
+
+class Table(FieldList):
+    def add(self, name: str, main: SQLObject):
+        main.set_table(name)
+        super().add(name, main)
 
 
 class PrimaryKey:
@@ -261,7 +271,7 @@ class Where:
         return cls('IS NULL')
     
     @classmethod
-    def list(cls, values):
+    def contains(cls, values):
         if isinstance(values, list):
             values = ','.join(quoted(v) for v in values)
         return cls(f'IN ({values})')
@@ -270,6 +280,12 @@ class Where:
         main.values.setdefault(WHERE, []).append('{}{} {}'.format(
             self.prefix, Field.format(name, main), self.expr
         ))
+
+
+eq, like, gt, gte, lt, lte, is_null, contains = (
+    getattr(Where, method) for method in 
+    ('eq', 'like', 'gt', 'gte', 'lt', 'lte', 'is_null', 'contains')
+) 
 
 
 class Not(Where):
@@ -346,9 +362,12 @@ class OrderBy:
     sort: SortType = SortType.ASC
     @classmethod
     def add(cls, name: str, main: SQLObject):
-        if main.alias:
+        found = re.findall(r'^_\d', name)
+        if found:
+            name = found[0].replace('_', '')
+        elif main.alias:
             name = f'{main.alias}.{name}'
-        main.values.setdefault(ORDER_BY, []).append(name + cls.sort.value)
+        main.values.setdefault(ORDER_BY, []).append(name+cls.sort.value)
 
 
 class GroupBy:
@@ -414,17 +433,16 @@ class Select(SQLObject):
             self.values.setdefault(key, []).append(value)
 
     def add(self, name: str, main: SQLObject):
-        new_tables = [
+        old_tables = main.values.get(FROM, [])
+        new_tables = set([
             '{jt}JOIN {tb} {a2} ON ({a1}.{f1} = {a2}.{f2})'.format(
                 jt=self.join_type.value,
                 tb=self.table_name,
                 a1=main.alias, f1=name,
                 a2=self.alias, f2=self.key_field
             )
-        ]
-        if new_tables not in main.values.get(FROM, []):
-            new_tables += self.values[FROM][1:]
-            main.values.setdefault(FROM, []).extend(new_tables)
+        ] + old_tables[1:])
+        main.values[FROM] = old_tables[:1] + list(new_tables)
         for key in USUAL_KEYS:
             main.update_values(key, self.values.get(key, []))
 
@@ -557,13 +575,22 @@ class Select(SQLObject):
         for rule in rules:
             rule.apply(self)
 
+    def add_fields(self, fields: list, order_by: bool=False, group_by:bool=False):
+        class_types = [Field]
+        if order_by:
+            class_types += [OrderBy]
+        if group_by:
+            class_types += [GroupBy]
+        FieldList(fields, class_types).add('', self)
+
+
 
 class SelectIN(Select):
     condition_class = Where
 
     def add(self, name: str, main: SQLObject):
         self.break_lines = False
-        self.condition_class.list(self).add(name, main)
+        self.condition_class.contains(self).add(name, main)
 
 SubSelect = SelectIN
 
@@ -577,6 +604,7 @@ class RulePutLimit(Rule):
         need_limit = any(not target.values.get(key) for key in (WHERE, SELECT))
         if need_limit:
             target.limit()
+
 
 class RuleSelectIN(Rule):
     @classmethod
@@ -592,6 +620,7 @@ class RuleSelectIN(Rule):
                     ','.join(t.split('=')[-1].strip() for t in tokens)
                 )
 
+
 class RuleAutoField(Rule):
     @classmethod
     def apply(cls, target: Select):
@@ -603,13 +632,11 @@ class RuleAutoField(Rule):
             s2 = set(target.values[ORDER_BY])
             target.values.setdefault(SELECT, []).extend( list(s2-s1) )
 
+
 class RuleLogicalOp(Rule):
-    REVERSE = {
-        ">=": "<",
-        "<=": ">",
-        "<>": "=",
-        "=": "<>"
-    }
+    REVERSE = {">=": "<", "<=": ">", "=": "<>"}
+    REVERSE |= {v: k for k, v in REVERSE.items()}
+
     @classmethod
     def apply(cls, target: Select):
         REGEX = re.compile('({})'.format(
@@ -617,12 +644,13 @@ class RuleLogicalOp(Rule):
         ))
         for i, condition in enumerate(target.values.get(WHERE, [])):
             expr = re.sub('\n|\t', ' ', condition)
-            tokens = [t for t in re.split(r'(NOT\b|not\b)',expr) if t.strip()]
-            if len(tokens) < 2 or not REGEX.findall(tokens[-1]):
+            if not re.search(r'\b(NOT|not)\b', expr):
                 continue
-            tokens = REGEX.split(tokens[-1])
-            tokens[1] = cls.REVERSE[tokens[1]]
+            tokens = [t.strip() for t in re.split(r'NOT\b|not\b|(<|>|=)', expr) if t]
+            op = ''.join(tokens[1: len(tokens)-1])
+            tokens = [tokens[0], cls.REVERSE[op], tokens[-1]]
             target.values[WHERE][i] = ' '.join(tokens)
+
 
 class RuleDateFuncReplace(Rule):
     """

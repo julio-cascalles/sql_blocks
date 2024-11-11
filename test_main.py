@@ -17,7 +17,8 @@ from tests.rules import (
 from tests.special_cases import (
     error_inverted_condition,
     named_fields_in_nested_query,
-    first_name_from_expr_field
+    first_name_from_expr_field, orderby_field_index,
+    many_fields_and_groups, compare_individual_fields
 )
 
 
@@ -92,3 +93,15 @@ def test_named_fields_nested_query():
 def test_complex_expression_field():
     EXPECTED_FLD = " LEFT(Actor.name, POSITION(' ', a.name) ) AS first_name"
     assert first_name_from_expr_field() == EXPECTED_FLD
+
+def test_orderby_field_index():
+    assert orderby_field_index() == 2
+
+def test_many_fields_and_groups():
+    EXPECTED_FIELDS = ["p.user_id", "p.created_at"]
+    res = many_fields_and_groups()    
+    for key in ('SELECT', 'GROUP BY', 'ORDER BY'):
+        assert res[key] == EXPECTED_FIELDS
+
+def test__compare_individual_fields():
+    assert compare_individual_fields()

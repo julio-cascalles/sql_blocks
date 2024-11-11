@@ -18,7 +18,7 @@ def optimized_select_in() -> bool:
     """)[0]
     p1.optimize([RuleSelectIN])
     p2 = select_by_category([
-        Where.list([
+        Where.contains([
             'Gizmo', 'Gadget', 'Doohickey'
         ])
     ])
@@ -64,7 +64,6 @@ def all_optimizations() -> bool:
             category
     """
     )[0]
-    p1.optimize()
     p2 = Select.parse("""
         SELECT category FROM Product p
         WHERE category IN ('Gizmo','Gadget','Doohickey')
@@ -74,4 +73,12 @@ def all_optimizations() -> bool:
         ORDER BY p.category LIMIT 100
     """
     )[0]
+    print('@'*50)
+    print(p1)
+    print('-'*50)
+    p1.optimize()
+    print(p1)
+    print('='*50)
+    print(p2)
+    print('@'*50)
     return p1 == p2

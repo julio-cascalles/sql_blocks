@@ -7,7 +7,7 @@ OrderBy.sort = SortType.DESC
 
 def best_movies() -> SelectIN:
     return SelectIN(
-        'Review r',  movie=[GroupBy, Distinct], rate=Having.avg(Where.gt(4.5))
+        'Review r',  movie=[GroupBy, Distinct], rate=Having.avg(gt(4.5))
     )
 
 def detached_objects() -> tuple:
@@ -23,8 +23,8 @@ def detached_objects() -> tuple:
         return Select('Movie m', title=Field,
             release_date=[OrderBy, Field], id=PrimaryKey,
             OR=Options(
-                genre=Where.eq('Sci-Fi'), awards=Where.like('Oscar')
-            ), director=[Where.like('Coppola'), Field, OrderBy]
+                genre=eq('Sci-Fi'), awards=like('Oscar')
+            ), director=[like('Coppola'), Field, OrderBy]
         )
     return select_actor(), select_cast(), select_movie()
 
@@ -38,11 +38,11 @@ def query_reference() -> Select:
                 id=[
                     SelectIN(
                         'Review r', movie=[GroupBy, Distinct],
-                        rate=Having.avg(Where.gt(4.5))
+                        rate=Having.avg(gt(4.5))
                     ),
                     PrimaryKey
                 ], OR=Options(
-                    genre=Where.eq('Sci-Fi'), awards=Where.like('Oscar')
+                    genre=eq('Sci-Fi'), awards=like('Oscar')
                 )
             ) # --- Movie
         ), # ------- Cast
@@ -102,8 +102,8 @@ def two_queries_same_table() -> Select:
 def select_product() -> Select:
     return Select(
         Product=Table('name,promotional,stock_amount,expiration_date'),
-        category=[Where.list([6,14,29,35,78]),Field], EAN=[Field, OrderBy],
-        price=[Where.lt(357.46),Field], status=Where('= Last_st')
+        category=[contains([6,14,29,35,78]),Field], EAN=[Field, OrderBy],
+        price=[lt(357.46),Field], status=Where('= Last_st')
     )
 
 def extract_subqueries() -> dict:

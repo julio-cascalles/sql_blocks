@@ -40,12 +40,12 @@ You can specify your own alias:  `a = Select('Actor a')`
 ---
 
 ### 3 - To set conditions, use **Where**:
-* For example, `a = Select(... age=Where.gt(45) )`
+* For example, `a = Select(... age=gt(45) )`
 
     Some possible conditions:
-    * field=Where.eq(value) - ...the field is EQUAL to the value;
-    * field=Where.gt(value) - ...the field is GREATER than the value;
-    * field=Where.lt(value) - ...the field is LESS than the value;
+    * field=eq(value) - ...the field is EQUAL to the value;
+    * field=gt(value) - ...the field is GREATER than the value;
+    * field=lt(value) - ...the field is LESS than the value;
 
     3.1 -- If you want to filter the field on a range of values:
     
@@ -56,7 +56,7 @@ You can specify your own alias:  `a = Select('Actor a')`
 query = Select('Movie m', title=Field,
     id=SelectIN(
         'Review r',
-        rate=Where.gt(4.5),
+        rate=gt(4.5),
         movie_id=Distinct
     )
 )
@@ -77,8 +77,8 @@ query = Select('Movie m', title=Field,
 3.3 -- Optional conditions:
 ```
     OR=Options(
-        genre=Where.eq("Sci-Fi"),
-        awards=Where.like("Oscar")
+        genre=eq("Sci-Fi"),
+        awards=like("Oscar")
     )
 ```
 > Could be AND=Options(...)
@@ -90,7 +90,7 @@ based_on_book=Not.is_null()
 
 3.5 -- List of values
 ```
-hash_tag=Where.list(['space', 'monster', 'gore'])
+hash_tag=contains(['space', 'monster', 'gore'])
 ```
 
 ---
@@ -102,7 +102,7 @@ hash_tag=Where.list(['space', 'monster', 'gore'])
     ```    
     SelectIN(
         'Review r', movie=[GroupBy, Distinct],
-        rate=Having.avg(Where.gt(4.5))
+        rate=Having.avg(gt(4.5))
     )
     ```
 ---
@@ -284,7 +284,7 @@ m = Select...
 ```
 best_movies = SelectIN(
     Review=Table('role'),
-    rate=[GroupBy, Having.avg(Where.gt(4.5))]
+    rate=[GroupBy, Having.avg(gt(4.5))]
 )
 m1 = Select(
     Movie=Table('title,release_date'),
@@ -305,9 +305,9 @@ m2 = Select(
     Select(
         'Product',
         label=Case('price').when(
-            Where.lt(50), 'cheap'
+            lt(50), 'cheap'
         ).when(
-            Where.gt(100), 'expensive'
+            gt(100), 'expensive'
         ).else_value(
             'normal'
         )
@@ -345,3 +345,22 @@ m2 = Select(
 * Replace `YEAR` function with date range comparison.
 
 > The method allows you to select which rules you want to apply in the optimization...Or define your own rules!
+
+---
+
+### 12 - Adding multiple fields at once
+```
+    query = Select('post p')
+    query.add_fields(
+        'user_id, created_at',
+        order_by=True, group_by=True
+    )
+```
+...is the same as...
+```
+    query = Select(
+        'post p',
+        user_id=[Field, GroupBy, OrderBy],
+        created_at=[Field, GroupBy, OrderBy]
+    )
+```
