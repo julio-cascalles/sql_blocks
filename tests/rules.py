@@ -73,12 +73,5 @@ def all_optimizations() -> bool:
         ORDER BY p.category LIMIT 100
     """
     )[0]
-    print('@'*50)
-    print(p1)
-    print('-'*50)
     p1.optimize()
-    print(p1)
-    print('='*50)
-    print(p2)
-    print('@'*50)
     return p1 == p2
