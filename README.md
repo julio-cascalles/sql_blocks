@@ -9,7 +9,7 @@ _Note that an alias "act" has been added._
 You can specify your own alias:  `a = Select('Actor a')`
 
 ---
-### 2 - You can also add a field, like this...
+### 2 - You can also add a field, contains this...
 
 * a = Select('Actor a', **name=Field**)
 
@@ -78,7 +78,7 @@ query = Select('Movie m', title=Field,
 ```
     OR=Options(
         genre=eq("Sci-Fi"),
-        awards=like("Oscar")
+        awards=contains("Oscar")
     )
 ```
 > Could be AND=Options(...)
@@ -90,7 +90,7 @@ based_on_book=Not.is_null()
 
 3.5 -- List of values
 ```
-hash_tag=contains(['space', 'monster', 'gore'])
+hash_tag=inside(['space', 'monster', 'gore'])
 ```
 
 ---
@@ -98,7 +98,7 @@ hash_tag=contains(['space', 'monster', 'gore'])
 
 * m = Select('Movie m' release_date=[Field, OrderBy])
     - This means that the field will appear in the results and also that the query will be ordered by that field.
-* Applying **GROUP BY** to item 3.2, it would look like this:
+* Applying **GROUP BY** to item 3.2, it would look contains this:
     ```    
     SelectIN(
         'Review r', movie=[GroupBy, Distinct],

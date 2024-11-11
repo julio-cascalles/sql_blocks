@@ -23,8 +23,8 @@ def detached_objects() -> tuple:
         return Select('Movie m', title=Field,
             release_date=[OrderBy, Field], id=PrimaryKey,
             OR=Options(
-                genre=eq('Sci-Fi'), awards=like('Oscar')
-            ), director=[like('Coppola'), Field, OrderBy]
+                genre=eq('Sci-Fi'), awards=contains('Oscar')
+            ), director=[contains('Coppola'), Field, OrderBy]
         )
     return select_actor(), select_cast(), select_movie()
 
@@ -42,7 +42,7 @@ def query_reference() -> Select:
                     ),
                     PrimaryKey
                 ], OR=Options(
-                    genre=eq('Sci-Fi'), awards=like('Oscar')
+                    genre=eq('Sci-Fi'), awards=contains('Oscar')
                 )
             ) # --- Movie
         ), # ------- Cast
@@ -102,7 +102,7 @@ def two_queries_same_table() -> Select:
 def select_product() -> Select:
     return Select(
         Product=Table('name,promotional,stock_amount,expiration_date'),
-        category=[contains([6,14,29,35,78]),Field], EAN=[Field, OrderBy],
+        category=[inside([6,14,29,35,78]),Field], EAN=[Field, OrderBy],
         price=[lt(357.46),Field], status=Where('= Last_st')
     )
 

@@ -54,3 +54,16 @@ def compare_individual_fields() -> bool:
         created_at=[Field, GroupBy, OrderBy]
     )
     return query.values == many_fields_and_groups()
+
+def added_object_changes() -> set:
+    SQLObject.ALIAS_FUNC = lambda t: t[0]
+    _class = Select(
+        'class c',
+        student_id=ForeignKey('student'),
+        teacher_id=ForeignKey('teacher')
+    )
+    student = Select(student=Table('student_name, age'), id=PrimaryKey)
+    teacher = Select(teacher=Table('teacher_name, course'), id=PrimaryKey)
+    s1 = set( (student + (_class + teacher)).values[FROM] )
+    s2 = set( _class.values[FROM] )
+    return s1.intersection(s2)

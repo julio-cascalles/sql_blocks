@@ -247,7 +247,7 @@ class Where:
         return cls.__constructor('=', value)
 
     @classmethod
-    def like(cls, value: str):
+    def contains(cls, value: str):
         return cls(f"LIKE '%{value}%'")
    
     @classmethod
@@ -271,7 +271,7 @@ class Where:
         return cls('IS NULL')
     
     @classmethod
-    def contains(cls, values):
+    def inside(cls, values):
         if isinstance(values, list):
             values = ','.join(quoted(v) for v in values)
         return cls(f'IN ({values})')
@@ -282,9 +282,9 @@ class Where:
         ))
 
 
-eq, like, gt, gte, lt, lte, is_null, contains = (
+eq, contains, gt, gte, lt, lte, is_null, inside = (
     getattr(Where, method) for method in 
-    ('eq', 'like', 'gt', 'gte', 'lt', 'lte', 'is_null', 'contains')
+    ('eq', 'contains', 'gt', 'gte', 'lt', 'lte', 'is_null', 'inside')
 ) 
 
 
@@ -447,23 +447,25 @@ class Select(SQLObject):
             main.update_values(key, self.values.get(key, []))
 
     def __add__(self, other: SQLObject):
-        if self.table_name.lower() == other.table_name.lower():
+        from copy import deepcopy
+        query = deepcopy(self)
+        if query.table_name.lower() == other.table_name.lower():
             for key in USUAL_KEYS:
-                self.update_values(key, other.values.get(key, []))
-            return self
-        foreign_field, primary_key = ForeignKey.find(self, other)
+                query.update_values(key, other.values.get(key, []))
+            return query
+        foreign_field, primary_key = ForeignKey.find(query, other)
         if not foreign_field:
-            foreign_field, primary_key = ForeignKey.find(other, self)
+            foreign_field, primary_key = ForeignKey.find(other, query)
             if foreign_field:
                 if primary_key:
-                    PrimaryKey.add(primary_key, self)
-                self.add(foreign_field, other)
+                    PrimaryKey.add(primary_key, query)
+                query.add(foreign_field, other)
                 return other
-            raise ValueError(f'No relationship found between {self.table_name} and {other.table_name}.')
+            raise ValueError(f'No relationship found between {query.table_name} and {other.table_name}.')
         elif primary_key:
             PrimaryKey.add(primary_key, other)
-        other.add(foreign_field, self)
-        return self
+        other.add(foreign_field, query)
+        return query
 
     def __str__(self) -> str:
         TABULATION = '\n\t' if self.break_lines else ' '
@@ -590,7 +592,7 @@ class SelectIN(Select):
 
     def add(self, name: str, main: SQLObject):
         self.break_lines = False
-        self.condition_class.contains(self).add(name, main)
+        self.condition_class.inside(self).add(name, main)
 
 SubSelect = SelectIN
 

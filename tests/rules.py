@@ -18,7 +18,7 @@ def optimized_select_in() -> bool:
     """)[0]
     p1.optimize([RuleSelectIN])
     p2 = select_by_category([
-        Where.contains([
+        Where.inside([
             'Gizmo', 'Gadget', 'Doohickey'
         ])
     ])

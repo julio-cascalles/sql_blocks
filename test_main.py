@@ -15,10 +15,10 @@ from tests.rules import (
     all_optimizations
 )
 from tests.special_cases import (
-    error_inverted_condition,
-    named_fields_in_nested_query,
+    error_inverted_condition, named_fields_in_nested_query,
     first_name_from_expr_field, orderby_field_index,
-    many_fields_and_groups, compare_individual_fields
+    many_fields_and_groups, compare_individual_fields,
+    added_object_changes
 )
 
 
@@ -105,3 +105,6 @@ def test_many_fields_and_groups():
 
 def test__compare_individual_fields():
     assert compare_individual_fields()
+
+def test_added_object_changes():
+    assert added_object_changes() == {'class c'}
