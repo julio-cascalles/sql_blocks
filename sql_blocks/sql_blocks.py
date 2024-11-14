@@ -4,15 +4,14 @@ import re
 
 PATTERN_PREFIX = '([^0-9 ]+[.])'
 PATTERN_SUFFIX = '( [A-Za-z_]+)'
-SUFFIX_AND_PRE = f'{PATTERN_SUFFIX}|{PATTERN_PREFIX}'
-DISTINCT_PREFX = f'(DISTINCT|distinct)|{PATTERN_PREFIX}'
+DISTINCT_PREFX = '(DISTINCT|distinct)'
 
 KEYWORD = {
     'SELECT': (',{}', 'SELECT *', DISTINCT_PREFX),
     'FROM': ('{}', '', PATTERN_SUFFIX),
     'WHERE': ('{}AND ', '', ''),
-    'GROUP BY': (',{}', '', SUFFIX_AND_PRE),
-    'ORDER BY': (',{}', '', SUFFIX_AND_PRE),
+    'GROUP BY': (',{}', '', PATTERN_SUFFIX),
+    'ORDER BY': (',{}', '', PATTERN_SUFFIX),
     'LIMIT': (' ', '', ''),
 }
 #              ^    ^        ^
@@ -69,16 +68,18 @@ class SQLObject:
         appendix = {WHERE: 'and|', FROM: 'join|JOIN'}
         return KEYWORD[key][0].format(appendix.get(key, ''))
 
-    def diff(self, key: str, search_list: list, symmetrical: bool=False) -> set:
+    def diff(self, key: str, search_list: list, exact: bool=False) -> set:
         def cleanup(fld: str) -> str:
-            if symmetrical:
+            if exact:
                 fld = fld.lower()
             return fld.strip()
         def is_named_field(fld: str) -> bool:
             return key == SELECT and re.search(' as | AS ', fld)
         pattern = KEYWORD[key][2] 
-        if key == WHERE and symmetrical:
-            pattern = f'{PATTERN_PREFIX}| '
+        if exact:
+            if key == WHERE:
+                pattern = ' '
+            pattern += f'|{PATTERN_PREFIX}'
         separator = self.get_separator(key)
         def field_set(source: list) -> set:
             return set(
@@ -91,7 +92,7 @@ class SQLObject:
             )       
         s1 = field_set(search_list)
         s2 = field_set(self.values.get(key, []))
-        if symmetrical:
+        if exact:
             return s1.symmetric_difference(s2)
         return s1 - s2
 
@@ -646,7 +647,7 @@ class RuleLogicalOp(Rule):
         ))
         for i, condition in enumerate(target.values.get(WHERE, [])):
             expr = re.sub('\n|\t', ' ', condition)
-            if not re.search(r'\b(NOT|not)\b', expr):
+            if not re.search(r'\b(NOT|not).*[<>=]', expr):
                 continue
             tokens = [t.strip() for t in re.split(r'NOT\b|not\b|(<|>|=)', expr) if t]
             op = ''.join(tokens[1: len(tokens)-1])

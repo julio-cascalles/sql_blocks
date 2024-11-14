@@ -47,11 +47,13 @@ You can specify your own alias:  `a = Select('Actor a')`
     * field=gt(value) - ...the field is GREATER than the value;
     * field=lt(value) - ...the field is LESS than the value;
 
-    3.1 -- If you want to filter the field on a range of values:
-    
-    `a = Select( 'Actor a', age=Between(45, 69) )`
+> You may use Where.**eq**, Where.**gt**, Where.**lt** ... or simply **eq**, **gt**, **lt** ... 😉
 
-    3.2 -- Sub-queries:
+3.1 -- If you want to filter the field on a range of values:
+
+`a = Select( 'Actor a', age=Between(45, 69) )`
+
+3.2 -- Sub-queries:
 ```
 query = Select('Movie m', title=Field,
     id=SelectIN(
