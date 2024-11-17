@@ -366,3 +366,39 @@ m2 = Select(
         created_at=[Field, GroupBy, OrderBy]
     )
 ```
+
+### 13 - Change parser engine
+```
+a, c, m = Select.parse(
+    """
+        Actor(name, id ?age = 40)
+        <- Cast(actor_id, movie_id) ->
+        Movie(id ^title)
+    """,
+    Cypher 
+    # ^^^ recognizes syntax like Neo4J queries
+)
+```
+
+**print(a+c+m)**
+```
+SELECT
+        act.name,
+        mov.title
+FROM
+        Cast cas
+        JOIN Movie mov ON (cas.movie_id = mov.id)
+        JOIN Actor act ON (cas.actor_id = act.id)
+WHERE
+        act.age = 40
+ORDER BY
+        mov.title
+```
+---
+> **Separators and meaning:**
+* `(  )`  Delimits a table and its fields
+* `,` Separate fields
+* `?` For simple conditions (> < = <>)
+* `<-` connects to the table on the left
+* `->` connects to the table on the right
+* `^` Put the field in the ORDER BY clause
