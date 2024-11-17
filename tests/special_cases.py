@@ -67,3 +67,29 @@ def added_object_changes() -> set:
     s1 = set( (student + (_class + teacher)).values[FROM] )
     s2 = set( _class.values[FROM] )
     return s1.intersection(s2)
+
+def query_for_students() -> Select:
+    return Select(
+        'Class c', student_id=Select(
+            'Student s', name=Field, age=eq(16), enrollment=PrimaryKey
+        ), teacher_id=Select(
+            'Teacher t', social_security=PrimaryKey,
+            name=Field, subject=[Field, OrderBy]
+        )
+    )
+
+def cypher_query() -> Select:
+    SQLObject.ALIAS_FUNC = lambda t: t[0].lower()
+    CYPHER_SCRIPT = """
+        Student(
+            name ? age = 16, enrollment
+        ) <- Class(
+            student_id,
+            teacher_id
+        ) ->
+        Teacher(
+            social_security, name ^subject
+        )
+    """
+    student, _class, teacher = Select.parse(CYPHER_SCRIPT, Cypher)
+    return student + _class + teacher

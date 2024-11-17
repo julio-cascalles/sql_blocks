@@ -413,6 +413,160 @@ class Rule:
     def apply(cls, target: 'Select'):
         ...
 
+class Parser:
+    REGEX = {}
+
+    def prepare(self):
+        ...
+
+    def __init__(self, txt: str, class_type):
+        self.queries = []
+        if not self.REGEX:
+            self.prepare()
+        self.class_type = class_type
+        self.eval(txt)
+
+    def eval(self, txt: str):
+        ...
+
+
+class SQLParser(Parser):
+    REGEX = {}
+
+    def prepare(self):
+        keywords = '|'.join(k + r'\b' for k in KEYWORD)
+        flags = re.IGNORECASE + re.MULTILINE
+        self.REGEX['keywords'] = re.compile(f'({keywords}|[*])', flags)
+        self.REGEX['subquery'] = re.compile(r'(\w\.)*\w+ +in +\(SELECT.*?\)', flags)
+
+    def eval(self, txt: str):
+        def find_last_word(pos: int) -> int:
+            SPACE, WORD = 1, 2
+            found = set()
+            for i in range(pos, 0, -1):
+                if txt[i] in [' ', '\t', '\n']:
+                    if sum(found) == 3:
+                        return i
+                    found.add(SPACE)
+                if txt[i].isalpha():
+                    found.add(WORD)
+                elif txt[i] == '.':
+                    found.remove(WORD)
+        def find_parenthesis(pos: int) -> int:
+            for i in range(pos, len(txt)-1):
+                if txt[i] == ')':
+                    return i+1
+        result = {}
+        found = self.REGEX['subquery'].search(txt)
+        while found:
+            start, end = found.span()
+            inner = txt[start: end]
+            if inner.count('(') > inner.count(')'):
+                end = find_parenthesis(end)
+                inner = txt[start: end-1]
+            fld, *inner = re.split(r' IN | in', inner, maxsplit=1)
+            if fld.upper() == 'NOT':
+                pos = find_last_word(start)
+                fld = txt[pos: start].strip() # [To-Do] Use the value of `fld`
+                start = pos
+                target_class = NotSelectIN
+            else:
+                target_class = SelectIN
+            obj = SQLParser(
+                ' '.join(re.sub(r'^\(', '', s.strip()) for s in inner),
+                class_type=target_class
+            ).queries[0]
+            result[obj.alias] = obj
+            txt = txt[:start-1] + txt[end+1:]
+            found = self.REGEX['subquery'].search(txt)
+        tokens = [t.strip() for t in self.REGEX['keywords'].split(txt) if t.strip()]
+        values = {k.upper(): v for k, v in zip(tokens[::2], tokens[1::2])}
+        tables = [t.strip() for t in re.split('JOIN|LEFT|RIGHT|ON', values[FROM]) if t.strip()]
+        for item in tables:
+            if '=' in item:
+                a1, f1, a2, f2 = [r.strip() for r in re.split('[().=]', item) if r]
+                obj1: SQLObject = result[a1]
+                obj2: SQLObject = result[a2]
+                PrimaryKey.add(f2, obj2)
+                ForeignKey(obj2.table_name).add(f1, obj1)
+            else:
+                obj = self.class_type(item)
+                for key in USUAL_KEYS:
+                    if not key in values:
+                        continue
+                    separator = self.class_type.get_separator(key)
+                    obj.values[key] = [
+                        Field.format(fld, obj)
+                        for fld in re.split(separator, values[key])
+                        if (fld != '*' and len(tables) == 1) or obj.match(fld)
+                    ]
+                result[obj.alias] = obj
+        self.queries = list( result.values() )
+
+
+class Cypher(Parser):
+    REGEX = {}
+    TOKEN_METHODS = {}
+
+    def prepare(self):
+        self.REGEX['separator'] = re.compile(r'([(,?)^]|->|<-)')
+        self.REGEX['condition'] = re.compile(r'(^\w+)|([<>=])')
+        self.TOKEN_METHODS = {
+            '(': self.add_field,  '?': self.add_where,
+            ',': self.add_field,  '^': self.add_order,
+            ')': self.new_query,  '->': self.left_ftable,
+            '<-': self.right_ftable,
+        }
+
+    def new_query(self, token: str):
+        if token.isidentifier():
+            self.queries.append( self.class_type(token) )
+
+    def add_where(self, token: str):
+        field, *condition = [
+            t for t in self.REGEX['condition'].split(token) if t
+        ]
+        Where(' '.join(condition)).add(field, self.queries[-1])
+    
+    def add_order(self, token: str):
+        FieldList(token, [Field, OrderBy]).add('', self.queries[-1])
+
+    def add_field(self, token: str):
+        FieldList(token, [Field]).add('', self.queries[-1])
+
+    def left_ftable(self, token: str):
+        self.new_query(token)
+        self.join_type = JoinType.LEFT
+
+    def right_ftable(self, token: str):
+        self.new_query(token)
+        self.join_type = JoinType.RIGHT
+
+    def add_foreign_key(self, token: str):
+        curr, last = [self.queries[i] for i in (-1, -2)]
+        pk_field = last.values[SELECT][-1].split('.')[-1]
+        last.delete(pk_field, [SELECT])
+        if self.join_type == JoinType.RIGHT:
+            curr, last = last, curr
+            pk_field, token = token, pk_field
+        last.key_field = pk_field
+        k = ForeignKey.get_key(last, curr)
+        ForeignKey.references[k] = (pk_field, token)
+        self.join_type = JoinType.INNER
+
+    def eval(self, txt: str):
+        self.join_type = JoinType.INNER
+        self.method = self.new_query
+        for token in self.REGEX['separator'].split( re.sub(r'\s+', '', txt) ):
+            if not token:
+                continue
+            if self.method:
+                self.method(token)
+            if token == '(' and self.join_type != JoinType.INNER:
+                self.method = self.add_foreign_key
+            else:
+                self.method = self.TOKEN_METHODS.get(token)
+
 
 class JoinType(Enum):
     INNER = ''
@@ -504,73 +658,8 @@ class Select(SQLObject):
         return re.findall(f'\b*{self.alias}[.]', expr) != []
 
     @classmethod
-    def parse(cls, txt: str) -> list[SQLObject]:
-        def find_last_word(pos: int) -> int:
-            SPACE, WORD = 1, 2
-            found = set()
-            for i in range(pos, 0, -1):
-                if txt[i] in [' ', '\t', '\n']:
-                    if sum(found) == 3:
-                        return i
-                    found.add(SPACE)
-                if txt[i].isalpha():
-                    found.add(WORD)
-                elif txt[i] == '.':
-                    found.remove(WORD)
-        def find_parenthesis(pos: int) -> int:
-            for i in range(pos, len(txt)-1):
-                if txt[i] == ')':
-                    return i+1
-        if not cls.REGEX:
-            keywords = '|'.join(k + r'\b' for k in KEYWORD)
-            flags = re.IGNORECASE + re.MULTILINE
-            cls.REGEX['keywords'] = re.compile(f'({keywords}|[*])', flags)
-            cls.REGEX['subquery'] = re.compile(r'(\w\.)*\w+ +in +\(SELECT.*?\)', flags)
-        result = {}
-        found = cls.REGEX['subquery'].search(txt)
-        while found:
-            start, end = found.span()
-            inner = txt[start: end]
-            if inner.count('(') > inner.count(')'):
-                end = find_parenthesis(end)
-                inner = txt[start: end-1]
-            fld, *inner = re.split(r' IN | in', inner, maxsplit=1)
-            if fld.upper() == 'NOT':
-                pos = find_last_word(start)
-                fld = txt[pos: start].strip() # [To-Do] Use the value of `fld`
-                start = pos
-                class_type = NotSelectIN
-            else:
-                class_type = SelectIN
-            obj = class_type.parse(
-                ' '.join(re.sub(r'^\(', '', s.strip()) for s in inner)
-            )[0]
-            result[obj.alias] = obj
-            txt = txt[:start-1] + txt[end+1:]
-            found = cls.REGEX['subquery'].search(txt)
-        tokens = [t.strip() for t in cls.REGEX['keywords'].split(txt) if t.strip()]
-        values = {k.upper(): v for k, v in zip(tokens[::2], tokens[1::2])}
-        tables = [t.strip() for t in re.split('JOIN|LEFT|RIGHT|ON', values[FROM]) if t.strip()]
-        for item in tables:
-            if '=' in item:
-                a1, f1, a2, f2 = [r.strip() for r in re.split('[().=]', item) if r]
-                obj1: SQLObject = result[a1]
-                obj2: SQLObject = result[a2]
-                PrimaryKey.add(f2, obj2)
-                ForeignKey(obj2.table_name).add(f1, obj1)
-            else:
-                obj = cls(item)
-                for key in USUAL_KEYS:
-                    if not key in values:
-                        continue
-                    separator = cls.get_separator(key)
-                    obj.values[key] = [
-                        Field.format(fld, obj)
-                        for fld in re.split(separator, values[key])
-                        if (fld != '*' and len(tables) == 1) or obj.match(fld)
-                    ]
-                result[obj.alias] = obj
-        return list( result.values() )
+    def parse(cls, txt: str, parser: Parser = SQLParser) -> list[SQLObject]:
+        return parser(txt, cls).queries
 
     def optimize(self, rules: list[Rule]=None):
         if not rules:

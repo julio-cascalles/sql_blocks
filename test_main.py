@@ -18,7 +18,7 @@ from tests.special_cases import (
     error_inverted_condition, named_fields_in_nested_query,
     first_name_from_expr_field, orderby_field_index,
     many_fields_and_groups, compare_individual_fields,
-    added_object_changes
+    added_object_changes, query_for_students, cypher_query
 )
 
 
@@ -108,3 +108,7 @@ def test__compare_individual_fields():
 
 def test_added_object_changes():
     assert added_object_changes() == {'class c'}
+
+def test_cypher():
+    q1, q2 = query_for_students(), cypher_query()
+    assert q1 == q2
