@@ -567,6 +567,122 @@ class Cypher(Parser):
             else:
                 self.method = self.TOKEN_METHODS.get(token)
 
+# ----------------------------
+class MongoParser(Parser):
+    REGEX = {}
+
+    def prepare(self):
+        self.REGEX['separator'] = re.compile(r'([({[\]},)])')
+
+    def new_query(self, token: str):
+        if not token:
+            return
+        *table, function = token.split('.')
+        self.param_type = self.PARAM_BY_FUNCTION.get(function)
+        if not self.param_type:            
+            raise SyntaxError(f'Unknown function {function}')
+        if table and table[0]:
+            self.queries.append( self.class_type(table[-1]) )
+
+    def param_is_where(self) -> bool:
+        return self.param_type == Where or isinstance(self.param_type, Where)
+
+    def next_param(self, token: str):
+        if self.param_type == GroupBy:
+            self.param_type = Field
+        self.get_param(token)
+
+    def get_param(self, token: str):
+        if not ':' in token:
+            return
+        field, value = token.split(':')
+        is_function = field.startswith('$')
+        if not value and not is_function:
+            if self.param_is_where():
+                self.last_field = field
+            return
+        if self.param_is_where():
+            if is_function:
+                function = field
+                field = self.last_field
+                self.last_field = ''
+            else:
+                function = '$eq'
+            if '"' in value:
+                value = value.replace('"', '')
+            elif value and value[0].isnumeric():
+                numeric_type = float if len(value.split('.')) == 2 else int
+                value = numeric_type(value)
+            self.param_type = self.CONDITIONS[function](value)
+            if function == '$or':
+                return
+        elif self.param_type == GroupBy:
+            if field != '_id':
+                return
+            field = re.sub('"|[$]', '', value)
+        elif self.param_type == OrderBy and value == '-1':
+            OrderBy.sort = SortType.DESC
+        elif field.startswith('$'):
+            field = '{}({})'.format(
+                field.replace('$', ''), value
+            )
+        if self.where_list is not None and self.param_is_where():
+            self.where_list[field] = self.param_type
+            return
+        self.param_type.add(field, self.queries[-1])
+
+    def close_brackets(self, token: str):
+        self.brackets[token] -= 1
+        if self.param_is_where() and self.brackets[token] == 0:
+            if self.where_list is not None:
+                Options(**self.where_list).add('OR', self.queries[-1])
+                self.where_list = None
+            if token == '{':
+                self.param_type = Field
+
+    def begin_conditions(self, value: str):
+        self.where_list = {}
+        return Where
+
+    def increment_brackets(self, value: str):
+        self.brackets[value] += 1
+
+    def eval(self, txt: str):
+        self.method = self.new_query
+        self.last_field = ''
+        self.where_list = None
+        self.PARAM_BY_FUNCTION = {
+            'find': Where, 'aggregate': GroupBy, 'sort': OrderBy
+        }
+        BRACKET_PAIR = {'}': '{', ']': '['}
+        self.brackets = {char: 0 for char in BRACKET_PAIR.values()}
+        self.CONDITIONS = {
+            '$in': lambda value: contains(value),
+            '$gt': lambda value: gt(value),
+            '$gte' : lambda value: gte(value),
+            '$lt': lambda value: lt(value),
+            '$lte' : lambda value: lte(value),
+            '$eq': lambda value: eq(value),
+            '$ne': lambda value: Not.eq(value),
+            '$or': self.begin_conditions,
+        }
+        self.TOKEN_METHODS = {
+            '{': self.get_param, ',': self.next_param, ')': self.new_query, 
+        }
+        for token in self.REGEX['separator'].split( re.sub(r'\s+', '', txt) ):
+            if not token:
+                continue
+            if self.method:
+                self.method(token)
+            if token in self.brackets:
+                self.increment_brackets(token)
+            elif token in BRACKET_PAIR:
+                self.close_brackets(
+                    BRACKET_PAIR[token]
+                )
+            self.method = self.TOKEN_METHODS.get(token)
+# ----------------------------
+
 
 class JoinType(Enum):
     INNER = ''

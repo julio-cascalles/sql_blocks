@@ -68,7 +68,7 @@ def added_object_changes() -> set:
     s2 = set( _class.values[FROM] )
     return s1.intersection(s2)
 
-def query_for_students() -> Select:
+def query_for_cypher() -> Select:
     return Select(
         'Class c', student_id=Select(
             'Student s', name=Field, age=eq(16), enrollment=PrimaryKey
@@ -93,3 +93,36 @@ def cypher_query() -> Select:
     """
     student, _class, teacher = Select.parse(CYPHER_SCRIPT, Cypher)
     return student + _class + teacher
+
+def mongo_query() -> Select:
+    MONGODB_QUERY = '''
+        db.people.find(
+            {
+                { $or : [
+                        {status: "B"}, {age:50} 
+                     ] 
+                },
+                age:{$gte: 18}, {status: "A"}
+            }, {name: 1, user_id: 1}
+        ).sort({user_id: -1}) 
+    '''
+    return Select.parse(MONGODB_QUERY, MongoParser)[0]
+
+def query_for_mongo() -> Select:
+    return Select(
+        'People', name=Field,
+        user_id=[Field, OrderBy],
+        OR=Options(status=eq('B'), age=eq(50)),
+        age=gte(18), status=eq('A')
+    )
+
+def mongo_group() -> Select:
+    MONGODB_QUERY = '''
+        db.people.aggregate([
+            {"$group" : {_id:"$gender", count:{$sum:1}}}
+        ])    
+    '''
+    return Select.parse(MONGODB_QUERY, MongoParser)[0]
+
+def group_for_mongo() -> Select:
+    return Select(people=Table('sum(1)'), gender=GroupBy)

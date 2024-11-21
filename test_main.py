@@ -18,7 +18,8 @@ from tests.special_cases import (
     error_inverted_condition, named_fields_in_nested_query,
     first_name_from_expr_field, orderby_field_index,
     many_fields_and_groups, compare_individual_fields,
-    added_object_changes, query_for_students, cypher_query
+    added_object_changes, query_for_cypher, cypher_query,
+    mongo_query, query_for_mongo, mongo_group, group_for_mongo
 )
 
 
@@ -110,5 +111,13 @@ def test_added_object_changes():
     assert added_object_changes() == {'class c'}
 
 def test_cypher():
-    q1, q2 = query_for_students(), cypher_query()
+    q1, q2 = query_for_cypher(), cypher_query()
+    assert q1 == q2
+
+def test_mongo_query():
+    q1, q2 = query_for_mongo(), mongo_query()
+    assert q1 == q2
+
+def test_group_mongo():
+    q1, q2 = mongo_group(), group_for_mongo()
     assert q1 == q2
