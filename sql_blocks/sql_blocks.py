@@ -9,7 +9,7 @@ DISTINCT_PREFX = '(DISTINCT|distinct)'
 KEYWORD = {
     'SELECT': (',{}', 'SELECT *', DISTINCT_PREFX),
     'FROM': ('{}', '', PATTERN_SUFFIX),
-    'WHERE': ('{}AND ', '', ''),
+    'WHERE': ('{}AND ', '', r'["\']'),
     'GROUP BY': (',{}', '', PATTERN_SUFFIX),
     'ORDER BY': (',{}', '', PATTERN_SUFFIX),
     'LIMIT': (' ', '', ''),
@@ -69,27 +69,32 @@ class SQLObject:
         return KEYWORD[key][0].format(appendix.get(key, ''))
 
     def diff(self, key: str, search_list: list, exact: bool=False) -> set:
+        def disassemble(source: list) -> list:
+            result = []
+            for fld in source:
+                result += re.split(r'([=()]|<>|\s+ON\s+|\s+on\s+)', fld)
+            return result
         def cleanup(fld: str) -> str:
             if exact:
                 fld = fld.lower()
             return fld.strip()
         def is_named_field(fld: str) -> bool:
             return key == SELECT and re.search(' as | AS ', fld)
-        pattern = KEYWORD[key][2] 
-        if exact:
-            if key == WHERE:
-                pattern = ' '
-            pattern += f'|{PATTERN_PREFIX}'
-        separator = self.get_separator(key)
         def field_set(source: list) -> set:
             return set(
                 (
                     fld if is_named_field(fld) else
                     re.sub(pattern, '', cleanup(fld))
                 )
-                for string in source
+                for string in disassemble(source)
                 for fld in re.split(separator, string)
             )       
+        pattern = KEYWORD[key][2] 
+        if exact:
+            if key == WHERE:
+                pattern = ' '
+            pattern += f'|{PATTERN_PREFIX}'
+        separator = self.get_separator(key)
         s1 = field_set(search_list)
         s2 = field_set(self.values.get(key, []))
         if exact:
@@ -421,13 +426,29 @@ class Parser:
 
     def __init__(self, txt: str, class_type):
         self.queries = []
-        if not self.REGEX:
-            self.prepare()
+        self.prepare()
         self.class_type = class_type
         self.eval(txt)
 
     def eval(self, txt: str):
         ...
+
+    @staticmethod
+    def remove_spaces(script: str) -> str:
+        is_string = False
+        result = []
+        for token in re.split(r'(")', script):
+            if token == '"':
+                is_string = not is_string
+            if not is_string:
+                token = re.sub(r'\s+', '', token)
+            result.append(token)
+        return ''.join(result)
+
+    def get_tokens(self, txt: str) -> list:
+        return self.REGEX['separator'].split(
+            self.remove_spaces(txt)
+        )
 
 
 class SQLParser(Parser):
@@ -506,17 +527,18 @@ class SQLParser(Parser):
 
 class Cypher(Parser):
     REGEX = {}
-    TOKEN_METHODS = {}
 
     def prepare(self):
-        self.REGEX['separator'] = re.compile(r'([(,?)^]|->|<-)')
+        self.REGEX['separator'] = re.compile(r'([(,?)^{}[\]]|->|<-)')
         self.REGEX['condition'] = re.compile(r'(^\w+)|([<>=])')
+        self.join_type = JoinType.INNER
         self.TOKEN_METHODS = {
             '(': self.add_field,  '?': self.add_where,
             ',': self.add_field,  '^': self.add_order,
             ')': self.new_query,  '->': self.left_ftable,
             '<-': self.right_ftable,
         }
+        self.method = self.new_query
 
     def new_query(self, token: str):
         if token.isidentifier():
@@ -542,30 +564,53 @@ class Cypher(Parser):
         self.new_query(token)
         self.join_type = JoinType.RIGHT
 
-    def add_foreign_key(self, token: str):
+    def add_foreign_key(self, token: str, pk_field: str=''):
         curr, last = [self.queries[i] for i in (-1, -2)]
-        pk_field = last.values[SELECT][-1].split('.')[-1]
-        last.delete(pk_field, [SELECT])
+        if not pk_field:
+            if not last.values.get(SELECT):
+                return
+            pk_field = last.values[SELECT][-1].split('.')[-1]
+            last.delete(pk_field, [SELECT])
         if self.join_type == JoinType.RIGHT:
             curr, last = last, curr
-            pk_field, token = token, pk_field
-        last.key_field = pk_field
+        if '{}' in token:
+            token = token.format(
+                curr.table_name.lower()
+            )
         k = ForeignKey.get_key(last, curr)
-        ForeignKey.references[k] = (pk_field, token)
+        ForeignKey.references[k] = (token, pk_field)
         self.join_type = JoinType.INNER
 
     def eval(self, txt: str):
-        self.join_type = JoinType.INNER
-        self.method = self.new_query
-        for token in self.REGEX['separator'].split( re.sub(r'\s+', '', txt) ):
+        for token in self.get_tokens(txt):
             if not token:
                 continue
             if self.method:
                 self.method(token)
-            if token == '(' and self.join_type != JoinType.INNER:
+            if token in '([' and self.join_type != JoinType.INNER:
                 self.method = self.add_foreign_key
             else:
                 self.method = self.TOKEN_METHODS.get(token)
+
+class Neo4JParser(Cypher):
+    def prepare(self):
+        super().prepare()
+        self.TOKEN_METHODS = {
+            '(': self.new_query,  '{': self.add_where,
+            '->': self.left_ftable, '<-': self.right_ftable,
+            '[': self.new_query
+        }
+        self.method = None
+
+    def new_query(self, token: str):
+        super().new_query(token.split(':')[-1])
+
+    def add_where(self, token: str):
+        super().add_where(token.replace(':', '='))
+
+    def add_foreign_key(self, token: str, pk_field: str='') -> tuple:
+        self.new_query(token)
+        return super().add_foreign_key('{}_id', 'id')
 
 # ----------------------------
 class MongoParser(Parser):
@@ -669,7 +714,7 @@ class MongoParser(Parser):
         self.TOKEN_METHODS = {
             '{': self.get_param, ',': self.next_param, ')': self.new_query, 
         }
-        for token in self.REGEX['separator'].split( re.sub(r'\s+', '', txt) ):
+        for token in self.get_tokens(txt):
             if not token:
                 continue
             if self.method:

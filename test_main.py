@@ -19,7 +19,8 @@ from tests.special_cases import (
     first_name_from_expr_field, orderby_field_index,
     many_fields_and_groups, compare_individual_fields,
     added_object_changes, query_for_cypher, cypher_query,
-    mongo_query, query_for_mongo, mongo_group, group_for_mongo
+    mongo_query, query_for_mongo, mongo_group, group_for_mongo,
+    neo4j_query, query_for_neo4J
 )
 
 
@@ -114,10 +115,22 @@ def test_cypher():
     q1, q2 = query_for_cypher(), cypher_query()
     assert q1 == q2
 
+def test_cypher_again():
+    """
+    Check that there is no error when
+     running the same test twice.
+    """
+    q1, q2 = query_for_cypher(), cypher_query()
+    assert q1 == q2
+
 def test_mongo_query():
     q1, q2 = query_for_mongo(), mongo_query()
     assert q1 == q2
 
 def test_group_mongo():
     q1, q2 = mongo_group(), group_for_mongo()
+    assert q1 == q2
+
+def test_neo4J():
+    q1, q2 = neo4j_query(), query_for_neo4J()
     assert q1 == q2
