@@ -7,20 +7,18 @@ PATTERN_SUFFIX = '( [A-Za-z_]+)'
 DISTINCT_PREFX = '(DISTINCT|distinct)'
 
 KEYWORD = {
-    'SELECT': (',{}', 'SELECT *', DISTINCT_PREFX),
-    'FROM': ('{}', '', PATTERN_SUFFIX),
-    'WHERE': ('{}AND ', '', r'["\']'),
-    'GROUP BY': (',{}', '', PATTERN_SUFFIX),
-    'ORDER BY': (',{}', '', PATTERN_SUFFIX),
-    'LIMIT': (' ', '', ''),
-}
-#              ^    ^        ^
-#              |    |        |
-#              |    |        +----- pattern to compare fields
-#              |    |
-#              |    +----- default when empty (SELECT * ...)
-#              |
-#              +-------- separator
+    'SELECT':   (',{}',     DISTINCT_PREFX),
+    'FROM':     ('{}',      PATTERN_SUFFIX),
+    'WHERE':    ('{}AND ',  ''),
+    'GROUP BY': (',{}',     PATTERN_SUFFIX),
+    'ORDER BY': (',{}',     PATTERN_SUFFIX),
+    'LIMIT':    (' ',       ''),
+}                                                    
+#                  ^          ^
+#                  |          |
+#                  |          +----- pattern to compare fields
+#                  |
+#                  +-------- separator
 
 SELECT, FROM, WHERE, GROUP_BY, ORDER_BY, LIMIT = KEYWORD.keys()
 USUAL_KEYS = [SELECT, WHERE, GROUP_BY, ORDER_BY, LIMIT]
@@ -70,6 +68,8 @@ class SQLObject:
 
     def diff(self, key: str, search_list: list, exact: bool=False) -> set:
         def disassemble(source: list) -> list:
+            if not exact:
+                return source
             result = []
             for fld in source:
                 result += re.split(r'([=()]|<>|\s+ON\s+|\s+on\s+)', fld)
@@ -89,10 +89,10 @@ class SQLObject:
                 for string in disassemble(source)
                 for fld in re.split(separator, string)
             )       
-        pattern = KEYWORD[key][2] 
+        pattern = KEYWORD[key][1] 
         if exact:
             if key == WHERE:
-                pattern = ' '
+                pattern = r'["\']| '
             pattern += f'|{PATTERN_PREFIX}'
         separator = self.get_separator(key)
         s1 = field_set(search_list)
@@ -418,6 +418,153 @@ class Rule:
     def apply(cls, target: 'Select'):
         ...
 
+class QueryLanguage:
+    pattern = '{select}{_from}{where}{group_by}{order_by}'
+    has_default = {key: bool(key == SELECT) for key in KEYWORD}
+
+    @staticmethod
+    def remove_alias(fld: str) -> str:
+        return ''.join(re.split(r'\w+[.]', fld))
+
+    def join_with_tabs(self, values: list, sep: str='') -> str:
+        sep = sep + self.TABULATION
+        return sep.join(v for v in values if v)
+
+    def add_field(self, values: list) -> str:
+        if not values:
+            return '*'
+        return  self.join_with_tabs(values, ',')
+
+    def tables(self, values: list) -> str:
+        return  self.join_with_tabs(values)
+
+    def condition(self, values: list) -> str:
+        return  self.join_with_tabs(values, ' AND ')
+
+    def sort_by(self, values: list) -> str:
+        return  self.join_with_tabs(values)
+
+    def set_group(self, values: list) -> str:
+        return  self.join_with_tabs(values, ',')
+
+    def __init__(self, target: 'Select'):
+        self.TABULATION = '\n\t' if target.break_lines else ' '
+        self.LINE_BREAK = '\n' if target.break_lines else ' '
+        self.TOKEN_METHODS = {
+            SELECT: self.add_field, FROM: self.tables, 
+            WHERE: self.condition,
+            ORDER_BY: self.sort_by, GROUP_BY: self.set_group,
+        }
+        self.result = {}
+        self.target = target
+
+    def pair(self, key: str) -> str:
+        if key == FROM:
+            return '_from'
+        return key.lower().replace(' ', '_')
+
+    def prefix(self, key: str) -> str:
+        return self.LINE_BREAK + key + self.TABULATION
+
+    def convert(self) -> str:
+        for key in KEYWORD:
+            method = self.TOKEN_METHODS.get(key)
+            ref = self.pair(key)
+            values = self.target.values.get(key, [])
+            if not method or (not values and not self.has_default[key]):
+                self.result[ref] = ''
+                continue
+            text = self.prefix(key) + method(values)
+            self.result[ref] = text
+        return self.pattern.format(**self.result).strip()
+
+class MongoDBLanguage(QueryLanguage):
+    pattern = '{_from}.{function}({where}{select}){order_by}'
+    has_default = {key: False for key in KEYWORD}
+    LOGICAL_OP_TO_MONGO_FUNC = {
+        '>': '$gt',  '>=': '$gte',
+        '<': '$lt',  '<=': '$lte',
+        '=': '$eq',  '<>': '$ne',
+    }
+
+    def join_with_tabs(self, values: list, sep: str=',') -> str:
+        def format_field(fld):
+            return '{indent}{fld}'.format(
+                fld=self.remove_alias(fld),
+                indent=self.TABULATION
+            )
+        return '{begin}{content}{line_break}{end}'.format(
+            begin='{',
+            content= sep.join(
+                format_field(fld) for fld in values if fld
+            ),
+            end='}', line_break=self.LINE_BREAK,
+        )
+
+    def add_field(self, values: list) -> str:
+        return ',{content}'.format(
+            content=self.join_with_tabs([f'{fld}: 1' for fld in values]),
+        )
+
+    def tables(self, values: list) -> str:
+        return values[0].split()[0].lower()
+    
+    def condition(self, values: list) -> str:
+        where_list = []
+        for condition in values:
+            tokens = re.split( 
+                r'(\w+|\d+)', self.remove_alias(condition) 
+            )
+            field, op, const = [t.strip() for t in tokens if t]
+            expr = '{begin}{op}:{const}{end}'.format(
+                begin='{', const=const, end='}',
+                op=self.LOGICAL_OP_TO_MONGO_FUNC[op],                
+            )
+            where_list.append(f'{field}:{expr}')
+        return self.join_with_tabs(where_list)
+
+    def sort_by(self, values: list) -> str:
+        return  ".sort({begin}{indent}{field}:{flag}{line_break}{end})".format(
+            begin='{', field=self.remove_alias(values[0].split()[0]), 
+            flag=-1 if OrderBy.sort == SortType.DESC else 1,
+            end='}', indent=self.TABULATION, line_break=self.LINE_BREAK,
+        )
+
+    def set_group(self, values: list) -> str:
+        self.result['function'] = 'aggregate'
+        return '{"$group" : {_id:"$%%", count:{$sum:1}}}'.replace('%%', values[0])
+    
+    def __init__(self, target: 'Select'):
+        super().__init__(target)
+        self.result['function'] = 'find'
+
+    def prefix(self, key: str):
+        return ''
+
+
+class Neo4JLanguage(QueryLanguage):
+    pattern = '{_from}.{function}({where}{select}){order_by}'
+    has_default = {key: False for key in KEYWORD}
+
+    def add_field(self, values: list) -> str:
+        return ''
+
+    def tables(self, values: list) -> str:
+        return ''
+
+    def condition(self, values: list) -> str:
+        return ''
+
+    def sort_by(self, values: list) -> str:
+        return ''
+
+    def set_group(self, values: list) -> str:
+        return ''
+
+    def prefix(self, key: str):
+        return ''
+
+
 class Parser:
     REGEX = {}
 
@@ -449,6 +596,13 @@ class Parser:
         return self.REGEX['separator'].split(
             self.remove_spaces(txt)
         )
+
+
+class JoinType(Enum):
+    INNER = ''
+    LEFT = 'LEFT '
+    RIGHT = 'RIGHT '
+    FULL = 'FULL '
 
 
 class SQLParser(Parser):
@@ -542,7 +696,9 @@ class Cypher(Parser):
 
     def new_query(self, token: str):
         if token.isidentifier():
-            self.queries.append( self.class_type(token) )
+            query = self.class_type(token)
+            self.queries.append(query)
+            # query.join_type = self.join_type
 
     def add_where(self, token: str):
         field, *condition = [
@@ -729,12 +885,6 @@ class MongoParser(Parser):
 # ----------------------------
 
 
-class JoinType(Enum):
-    INNER = ''
-    LEFT = 'LEFT '
-    RIGHT = 'RIGHT '
-    FULL = 'FULL '
-
 class Select(SQLObject):
     join_type: JoinType = JoinType.INNER
     REGEX = {}
@@ -784,16 +934,7 @@ class Select(SQLObject):
         return query
 
     def __str__(self) -> str:
-        TABULATION = '\n\t' if self.break_lines else ' '
-        LINE_BREAK = '\n' if self.break_lines else ' '
-        DEFAULT = lambda key: KEYWORD[key][1]
-        FMT_SEP = lambda key: KEYWORD[key][0].format(TABULATION)
-        select, _from, where, groupBy, orderBy, limit = [
-            DEFAULT(key) if not self.values.get(key) else "{}{}{}{}".format(
-                LINE_BREAK, key, TABULATION, FMT_SEP(key).join(self.values[key])
-            ) for key in KEYWORD
-        ]
-        return f'{select}{_from}{where}{groupBy}{orderBy}{limit}'.strip()
+        return self.translate_to(QueryLanguage)
    
     def __call__(self, **values):
         to_list = lambda x: x if isinstance(x, list) else [x]
@@ -836,6 +977,8 @@ class Select(SQLObject):
             class_types += [GroupBy]
         FieldList(fields, class_types).add('', self)
 
+    def translate_to(self, language: QueryLanguage) -> str:
+        return language(self).convert()
 
 
 class SelectIN(Select):
@@ -863,7 +1006,7 @@ class RuleSelectIN(Rule):
     @classmethod
     def apply(cls, target: Select):
         for i, condition in enumerate(target.values[WHERE]):
-            tokens = re.split(' or | OR ', re.sub('\n|\t|[()]', ' ', condition))
+            tokens = re.split(r'\s+or\s+|\s+OR\s+', re.sub('\n|\t|[()]', ' ', condition))
             if len(tokens) < 2:
                 continue
             fields = [t.split('=')[0].split('.')[-1].lower().strip() for t in tokens]
@@ -909,7 +1052,7 @@ class RuleDateFuncReplace(Rule):
     """
     SQL algorithm by Ralff Matias
     """
-    REGEX = re.compile(r'(\bYEAR[(]|\byear[(]|=|[)])')
+    REGEX = re.compile(r'(YEAR[(]|year[(]|=|[)])')
 
     @classmethod
     def apply(cls, target: Select):
@@ -923,3 +1066,36 @@ class RuleDateFuncReplace(Rule):
             temp = Select(f'{target.table_name} {target.alias}')
             Between(f'{year}-01-01', f'{year}-12-31').add(field, temp)
             target.values[WHERE][i] = ' AND '.join(temp.values[WHERE])
+
+
+if __name__ == "__main__":
+    q1 = Select(
+        'Class c', student_id=Select(
+            'Student s', id=PrimaryKey,
+        ), teacher_id=Select(
+            'Teacher t', id=PrimaryKey,
+            name=eq('Joey Tribbiani')
+        )
+    )
+    SQLObject.ALIAS_FUNC = lambda t: t[0].lower()
+    NEO4J_SCRIPT = '''
+        MATCH (s: Student)
+        <- [:Class] ->
+        (t: Teacher{name:"Joey Tribbiani"})
+        RETURN s, t
+    '''
+    s, c, t = Select.parse(NEO4J_SCRIPT, Neo4JParser)
+    q2 = s + c + t
+    OrderBy.sort = SortType.DESC
+    print('='*50)
+    query = Select(
+        'People', age=Between(45, 69),
+        name=Field, cast_role=[Field, OrderBy]
+    )
+    # query.break_lines = False
+    print('-'*50)
+    print( query.translate_to(MongoDBLanguage) )
+    print('='*50)
+    print(q1)
+    print('-'*50)
+    # print(q2) # <<--- QueryLanguage = SQL ! ;)

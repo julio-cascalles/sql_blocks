@@ -94,19 +94,31 @@ def cypher_query() -> Select:
     student, _class, teacher = Select.parse(CYPHER_SCRIPT, Cypher)
     return student + _class + teacher
 
+MONGODB_SCRIPT_FIND = '''
+    db.people.find(
+        {
+            { $or : [
+                    {status: "B"}, {age:50} 
+                    ] 
+            },
+            age:{$gte: 18}, {status: "A"}
+        }, {name: 1, user_id: 1}
+    ).sort({user_id: -1}) 
+'''
+MONGO_SCRIPT_AGGREG = '''
+    db.people.aggregate([
+        {"$group" : {_id:"$gender", count:{$sum:1}}}
+    ])    
+'''
+NEO4J_SCRIPT = '''
+    MATCH (s: Student)
+    <- [:Class] ->
+    (t: Teacher{name:"Joey Tribbiani"})
+    RETURN s, t
+'''
+
 def mongo_query() -> Select:
-    MONGODB_SCRIPT = '''
-        db.people.find(
-            {
-                { $or : [
-                        {status: "B"}, {age:50} 
-                     ] 
-                },
-                age:{$gte: 18}, {status: "A"}
-            }, {name: 1, user_id: 1}
-        ).sort({user_id: -1}) 
-    '''
-    return Select.parse(MONGODB_SCRIPT, MongoParser)[0]
+    return Select.parse(MONGODB_SCRIPT_FIND, MongoParser)[0]
 
 def query_for_mongo() -> Select:
     return Select(
@@ -118,22 +130,12 @@ def query_for_mongo() -> Select:
     )
 
 def mongo_group() -> Select:
-    MONGODB_SCRIPT = '''
-        db.people.aggregate([
-            {"$group" : {_id:"$gender", count:{$sum:1}}}
-        ])    
-    '''
-    return Select.parse(MONGODB_SCRIPT, MongoParser)[0]
+    return Select.parse(MONGO_SCRIPT_AGGREG, MongoParser)[0]
 
 def group_for_mongo() -> Select:
     return Select(people=Table('sum(1)'), gender=GroupBy)
 
 def neo4j_query() -> Select:
-    NEO4J_SCRIPT = '''
-        MATCH (s: Student)
-        <- [:Class] ->
-        (t: Teacher{name:"Joey Tribbiani"})
-    '''
     student, _class, teacher = Select.parse(NEO4J_SCRIPT, Neo4JParser)
     return student + _class + teacher
 
