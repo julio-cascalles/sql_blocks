@@ -135,8 +135,14 @@ def mongo_group() -> Select:
 def group_for_mongo() -> Select:
     return Select(people=Table('sum(1)'), gender=GroupBy)
 
-def neo4j_query() -> Select:
-    student, _class, teacher = Select.parse(NEO4J_SCRIPT, Neo4JParser)
+def neo4j_queries(script: str = NEO4J_SCRIPT) -> list:
+    print('@'*50)
+    print('Neo4J script:\n', script)
+    print('@'*50)
+    return Select.parse(script, Neo4JParser)
+
+def neo4j_joined_query() -> Select:
+    student, _class, teacher = neo4j_queries()
     return student + _class + teacher
 
 def query_for_neo4J() -> Select:
@@ -148,3 +154,7 @@ def query_for_neo4J() -> Select:
             name=eq('Joey Tribbiani')
         )
     )
+
+def script_from_neo4j_query() -> str:
+    # return query_for_neo4J().translate_to(Neo4JLanguage)
+    return neo4j_joined_query().translate_to(Neo4JLanguage)

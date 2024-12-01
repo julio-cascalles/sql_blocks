@@ -20,7 +20,8 @@ from tests.special_cases import (
     many_fields_and_groups, compare_individual_fields,
     added_object_changes, query_for_cypher, cypher_query,
     mongo_query, query_for_mongo, mongo_group, group_for_mongo,
-    neo4j_query, query_for_neo4J
+    neo4j_queries, query_for_neo4J, neo4j_joined_query,
+    script_from_neo4j_query
 )
 
 
@@ -132,5 +133,16 @@ def test_group_mongo():
     assert q1 == q2
 
 def test_neo4J():
-    q1, q2 = neo4j_query(), query_for_neo4J()
+    q1, q2 = neo4j_joined_query(), query_for_neo4J()
     assert q1 == q2
+
+def test_neo4J_round_trip():
+    s1, c1, t1 = neo4j_queries()
+    s2, c2, t2 = neo4j_queries(
+        script_from_neo4j_query()
+    )
+    assert all([
+        s1 == s2,
+        c1 == c2,
+        t1 == t2
+    ])
