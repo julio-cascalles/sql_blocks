@@ -69,17 +69,20 @@ def added_object_changes() -> set:
     return s1.intersection(s2)
 
 def query_for_cypher() -> Select:
+    right_query=Select(
+        'Teacher t', social_security=PrimaryKey,
+        name=Field, subject=[Field, OrderBy]
+    )
+    right_query.join_type = JoinType.RIGHT
     return Select(
         'Class c', student_id=Select(
             'Student s', name=Field, age=eq(16), enrollment=PrimaryKey
-        ), teacher_id=Select(
-            'Teacher t', social_security=PrimaryKey,
-            name=Field, subject=[Field, OrderBy]
-        )
+        ), teacher_id=right_query
     )
 
 def cypher_query() -> Select:
     SQLObject.ALIAS_FUNC = lambda t: t[0].lower()
+    ForeignKey.references = {}
     CYPHER_SCRIPT = """
         Student(
             name ? age = 16, enrollment
@@ -95,15 +98,19 @@ def cypher_query() -> Select:
     return student + _class + teacher
 
 MONGODB_SCRIPT_FIND = '''
-    db.people.find(
-        {
-            { $or : [
-                    {status: "B"}, {age:50} 
-                    ] 
+    db.people.find({
+            {
+                $or: [
+                    status:{$eq:'B'},
+                    age:{$lt:50}
+                ]
             },
-            age:{$gte: 18}, {status: "A"}
-        }, {name: 1, user_id: 1}
-    ).sort({user_id: -1}) 
+            age:{$gte:18},  status:{$eq:'A'}
+    },{
+            name: 1, user_id: 1
+    }).sort({
+            user_id: -1
+    })
 '''
 MONGO_SCRIPT_AGGREG = '''
     db.people.aggregate([
@@ -117,28 +124,25 @@ NEO4J_SCRIPT = '''
     RETURN s, t
 '''
 
-def mongo_query() -> Select:
-    return Select.parse(MONGODB_SCRIPT_FIND, MongoParser)[0]
+def mongo_query(script: str = MONGODB_SCRIPT_FIND) -> Select:
+    return Select.parse(script, MongoParser)[0]
 
 def query_for_mongo() -> Select:
     return Select(
         'People',
-        OR=Options(status=eq('B'), age=eq(50)),
+        OR=Options(status=eq('B'), age=lt(50)),
         age=gte(18), status=eq('A'),
         name=Field,
         user_id=[Field, OrderBy],
     )
 
-def mongo_group() -> Select:
-    return Select.parse(MONGO_SCRIPT_AGGREG, MongoParser)[0]
+def mongo_group(script: str=MONGO_SCRIPT_AGGREG) -> Select:
+    return Select.parse(script, MongoParser)[0]
 
 def group_for_mongo() -> Select:
     return Select(people=Table('sum(1)'), gender=GroupBy)
 
 def neo4j_queries(script: str = NEO4J_SCRIPT) -> list:
-    print('@'*50)
-    print('Neo4J script:\n', script)
-    print('@'*50)
     return Select.parse(script, Neo4JParser)
 
 def neo4j_joined_query() -> Select:
@@ -146,15 +150,19 @@ def neo4j_joined_query() -> Select:
     return student + _class + teacher
 
 def query_for_neo4J() -> Select:
+    right_query = Select(
+        'Teacher t', id=PrimaryKey,
+        name=eq('Joey Tribbiani')
+    )
+    right_query.join_type = JoinType.RIGHT
     return Select(
         'Class c', student_id=Select(
             'Student s', id=PrimaryKey,
-        ), teacher_id=Select(
-            'Teacher t', id=PrimaryKey,
-            name=eq('Joey Tribbiani')
-        )
+        ), teacher_id=right_query
     )
 
 def script_from_neo4j_query() -> str:
-    # return query_for_neo4J().translate_to(Neo4JLanguage)
     return neo4j_joined_query().translate_to(Neo4JLanguage)
+
+def script_mongo_from(query: Select) -> str:
+    return query.translate_to(MongoDBLanguage)

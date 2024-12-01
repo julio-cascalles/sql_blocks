@@ -480,12 +480,17 @@ class QueryLanguage:
         return self.pattern.format(**self.result).strip()
 
 class MongoDBLanguage(QueryLanguage):
-    pattern = '{_from}.{function}({where}{select}){order_by}'
+    pattern = '{_from}.{function}({where}{select}{group_by}){order_by}'
     has_default = {key: False for key in KEYWORD}
     LOGICAL_OP_TO_MONGO_FUNC = {
         '>': '$gt',  '>=': '$gte',
         '<': '$lt',  '<=': '$lte',
         '=': '$eq',  '<>': '$ne',
+    }
+    OPERATORS = '|'.join(op for op in LOGICAL_OP_TO_MONGO_FUNC)
+    REGEX = {
+        'options': re.compile(r'\s+or\s+|\s+OR\s+'),
+        'condition': re.compile(fr'({OPERATORS})')
     }
 
     def join_with_tabs(self, values: list, sep: str=',') -> str:
@@ -503,26 +508,46 @@ class MongoDBLanguage(QueryLanguage):
         )
 
     def add_field(self, values: list) -> str:
+        if self.result['function'] == 'aggregate':
+            return ''
         return ',{content}'.format(
             content=self.join_with_tabs([f'{fld}: 1' for fld in values]),
         )
 
     def get_tables(self, values: list) -> str:
         return values[0].split()[0].lower()
-    
-    def extract_conditions(self, values: list) -> str:
+
+    @classmethod
+    def mongo_where_list(cls, values: list) -> list:
+        OR_REGEX = cls.REGEX['options']
         where_list = []
         for condition in values:
-            tokens = re.split( 
-                r'(\w+|\d+)', self.remove_alias(condition) 
+            if OR_REGEX.findall(condition):
+                condition = re.sub('[()]', '', condition)
+                expr = '{begin}$or: [{content}]{end}'.format(
+                    content=','.join(
+                        cls.mongo_where_list( OR_REGEX.split(condition) )
+                    ), begin='{', end='}',
+                )
+                where_list.append(expr)
+                continue
+            tokens = cls.REGEX['condition'].split( 
+                cls.remove_alias(condition) 
             )
-            field, op, const = [t.strip() for t in tokens if t]
+            tokens = [t.strip() for t in tokens if t]
+            field, *op, const = tokens
+            op = ''.join(op)
             expr = '{begin}{op}:{const}{end}'.format(
                 begin='{', const=const, end='}',
-                op=self.LOGICAL_OP_TO_MONGO_FUNC[op],                
+                op=cls.LOGICAL_OP_TO_MONGO_FUNC[op],                
             )
             where_list.append(f'{field}:{expr}')
-        return self.join_with_tabs(where_list)
+        return where_list
+    
+    def extract_conditions(self, values: list) -> str:
+        return self.join_with_tabs(
+            self.mongo_where_list(values)
+        )
 
     def sort_by(self, values: list) -> str:
         return  ".sort({begin}{indent}{field}:{flag}{line_break}{end})".format(
@@ -533,11 +558,14 @@ class MongoDBLanguage(QueryLanguage):
 
     def set_group(self, values: list) -> str:
         self.result['function'] = 'aggregate'
-        return '{"$group" : {_id:"$%%", count:{$sum:1}}}'.replace('%%', values[0])
+        return '{"$group" : {_id:"$%%", count:{$sum:1}}}'.replace(
+            '%%', self.remove_alias( values[0] )
+        )
     
     def __init__(self, target: 'Select'):
         super().__init__(target)
         self.result['function'] = 'find'
+        self.KEYWORDS = [GROUP_BY, SELECT, FROM, WHERE, ORDER_BY]
 
     def prefix(self, key: str):
         return ''
@@ -567,7 +595,11 @@ class Neo4JLanguage(QueryLanguage):
                 pos = txt[start:end-1].lower()
                 tokens = re.split(r'JOIN\s+|ON\s+', txt[end:])
                 txt = tokens[1].strip()
-            table_name, alias = txt.split()
+            table_name, *alias = txt.split()
+            if alias:
+                alias = alias[0]
+            else:
+                alias = SQLObject.ALIAS_FUNC(table_name)
             condition = self.aliases.get(alias, '')
             if not condition:
                 self.aliases[alias] = ''
@@ -585,7 +617,7 @@ class Neo4JLanguage(QueryLanguage):
             alias, field, const = re.split(r'[.=]', condition)
             begin, end = '{', '}'
             self.aliases[alias] = f'{begin}{field}:{const}{end}'
-        return ''
+        return ''  # --- WHERE [*other_comparisions*] ...
 
     def sort_by(self, values: list) -> str:
         return ''
@@ -761,17 +793,27 @@ class Cypher(Parser):
         curr, last = [self.queries[i] for i in (-1, -2)]
         if not pk_field:
             if not last.values.get(SELECT):
-                return
+                raise IndexError(f'Primary Key not found for {last.table_name}.')
             pk_field = last.values[SELECT][-1].split('.')[-1]
             last.delete(pk_field, [SELECT])
-        if last.join_type == JoinType.LEFT:
-            curr, last = last, curr
         if '{}' in token:
-            token = token.format(
+            foreign_fld = token.format(
+                last.table_name.lower()
+                if last.join_type == JoinType.LEFT else
                 curr.table_name.lower()
             )
-        k = ForeignKey.get_key(last, curr)
-        ForeignKey.references[k] = (token, pk_field)
+        else:
+            if not curr.values.get(SELECT):
+                raise IndexError(f'Foreign Key not found for {curr.table_name}.')
+            foreign_fld = curr.values[SELECT][0].split('.')[-1]
+            curr.delete(foreign_fld, [SELECT])
+        if curr.join_type == JoinType.RIGHT:
+            curr, last = last, curr
+        k = ForeignKey.get_key(curr, last)
+        ForeignKey.references[k] = (foreign_fld, pk_field)
+
+    def fk_charset(self) -> str:
+        return '(['
 
     def eval(self, txt: str):
         # ====================================
@@ -788,9 +830,8 @@ class Cypher(Parser):
             if self.method:
                 self.method(token)
             if token in ')]' and has_side_table():
-                self.method = self.add_foreign_key
-            else:
-                self.method = self.TOKEN_METHODS.get(token)
+                self.add_foreign_key('')
+            self.method = self.TOKEN_METHODS.get(token)
         # ====================================
 
 class Neo4JParser(Cypher):
@@ -1110,38 +1151,3 @@ class RuleDateFuncReplace(Rule):
             temp = Select(f'{target.table_name} {target.alias}')
             Between(f'{year}-01-01', f'{year}-12-31').add(field, temp)
             target.values[WHERE][i] = ' AND '.join(temp.values[WHERE])
-
-
-if __name__ == "__main__":
-    # q1 = Select(
-    #     'Class c', student_id=Select(
-    #         'Student s', id=PrimaryKey,
-    #     ), teacher_id=Select(
-    #         'Teacher t', id=PrimaryKey,
-    #         name=eq('Joey Tribbiani')
-    #     )
-    # )
-    SQLObject.ALIAS_FUNC = lambda t: t[0].lower()
-    NEO4J_SCRIPT = '''
-        MATCH (s: Student)
-        <- [:Class] ->
-        (t: Teacher{name:"Joey Tribbiani"})
-        RETURN s, t
-    '''
-    s, c, t = Select.parse(NEO4J_SCRIPT, Neo4JParser)
-    q2 = s + c + t
-    # OrderBy.sort = SortType.DESC
-    # print('='*50)
-    # query = Select(
-    #     'People', age=Between(45, 69),
-    #     name=Field, cast_role=[Field, OrderBy]
-    # )
-    # # query.break_lines = False
-    # print('-'*50)
-    # print( query.translate_to(MongoDBLanguage) )
-    # print('='*50)
-    # print(q1)
-    # print('-'*50)
-    print(q2) # <<--- QueryLanguage = SQL ! ;)
-    print('-'*50)
-    print( q2.translate_to(Neo4JLanguage) )
