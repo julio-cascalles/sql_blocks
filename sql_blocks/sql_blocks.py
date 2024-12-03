@@ -572,11 +572,11 @@ class MongoDBLanguage(QueryLanguage):
 
 
 class Neo4JLanguage(QueryLanguage):
-    pattern = 'MATCH {_from}{where}RETURN {aliases}'
-    has_default = {key: False for key in KEYWORD}
+    pattern = 'MATCH {_from}{where}RETURN {select}{order_by}'
+    has_default = {WHERE: False, FROM: False, ORDER_BY: True, SELECT: True}
 
     def add_field(self, values: list) -> str:
-        return ''
+        return self.TABULATION + ','.join(self.aliases.keys())
 
     def get_tables(self, values: list) -> str:
         NODE_FORMAT = dict(
@@ -605,7 +605,6 @@ class Neo4JLanguage(QueryLanguage):
             if not condition:
                 self.aliases[alias] = ''
             nodes[pos] = NODE_FORMAT[pos].format(alias, table_name, condition)
-        self.result['aliases'] = ','.join(self.aliases.keys())
         return self.TABULATION + '{left}{core}{right}'.format(**nodes)
         
 
@@ -629,7 +628,10 @@ class Neo4JLanguage(QueryLanguage):
         return self.join_with_tabs(where_list, ' AND ') + self.LINE_BREAK
 
     def sort_by(self, values: list) -> str:
-        return ''
+        return '{}{}'.format(
+            super().sort_by(values),
+            OrderBy.sort.value
+        )
 
     def set_group(self, values: list) -> str:
         return ''
@@ -637,10 +639,14 @@ class Neo4JLanguage(QueryLanguage):
     def __init__(self, target: 'Select'):
         super().__init__(target)
         self.aliases = {}
-        self.KEYWORDS = [WHERE, FROM]
+        self.KEYWORDS = [WHERE, FROM, ORDER_BY, SELECT]
 
     def prefix(self, key: str):
-        if key == WHERE and not self.has_default[WHERE]:
+        default_prefix = any([
+            (key == WHERE and not self.has_default[WHERE]),
+            key == ORDER_BY
+        ])
+        if default_prefix:
             return super().prefix(key)
         return ''
 
@@ -1186,38 +1192,33 @@ class RuleDateFuncReplace(Rule):
 
 
 if __name__ == "__main__":
-    left_query = Select(
-        'Student s', id=PrimaryKey,
-        age=gt(18)
-        # age=eq(18)
-    )
-    left_query.join_type = JoinType.LEFT
-    right_query = Select(
-        'Teacher t', id=PrimaryKey,
-        name=Not.eq('Joey Tribbiani')
-        # name=eq('Joey Tribbiani')
-    )
-    right_query.join_type = JoinType.RIGHT
+    SQLObject.ALIAS_FUNC = lambda t: t[0].lower()
+    def get_side(script: str, parser: Parser, side: JoinType):
+        query = Select.parse(script, parser)[0]
+        query(id=PrimaryKey)
+        query.join_type = side
+        return query
+    # -----------------------------------------------------
     query = Select(
         'Class c',
-        student_id=left_query,
-        teacher_id=right_query,
+        student_id=get_side(
+            'SELECT * FROM Student s WHERE s.age > 18', 
+            SQLParser, JoinType.LEFT
+        ),
+        teacher_id=get_side(
+            '''db.Teacher.find({
+                name: {$ne: "Joey Tribbiani"}
+            }).sort({
+                experience: -1
+            })''', 
+            MongoParser, JoinType.RIGHT
+        )
     )
     print(query)
-    # query.break_lines = False
+    result = query.translate_to(
+        Neo4JLanguage
+    )
+    # -----------------------------------------------------
     print('¤'*50)
-    """
-    /* --- Expected --- */
-    MATCH
-        (s:Student)
-            <- [:Class] ->
-        (t:Teacher)
-    WHERE
-        s.age > 18
-        AND
-        t.name <> 'Joey Tribbiani'
-    RETURN
-        s, t
-    """
-    print(query.translate_to(Neo4JLanguage))
+    print(result)
     print('¤'*50)
