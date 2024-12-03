@@ -117,12 +117,16 @@ MONGO_SCRIPT_AGGREG = '''
         {"$group" : {_id:"$gender", count:{$sum:1}}}
     ])    
 '''
-NEO4J_SCRIPT = '''
-    MATCH (s: Student)
-    <- [:Class] ->
-    (t: Teacher{name:"Joey Tribbiani"})
-    RETURN s, t
+NEO4J_FORMAT = '''
+    MATCH 
+        (s: Student)
+            <- [:Class] ->
+        (t: Teacher{})
+    {}RETURN s, t
 '''
+NEO4J_SCRIPT = NEO4J_FORMAT.format(
+    '{name:"Joey Tribbiani"}', ''
+)
 
 def mongo_query(script: str = MONGODB_SCRIPT_FIND) -> Select:
     return Select.parse(script, MongoParser)[0]
@@ -149,16 +153,21 @@ def neo4j_joined_query() -> Select:
     student, _class, teacher = neo4j_queries()
     return student + _class + teacher
 
-def query_for_neo4J() -> Select:
+def left_query_neo4j() -> Select:
+    return Select(
+        'Student s', id=PrimaryKey,
+    )
+
+def query_for_neo4J(where_func=eq, left_query=None) -> Select:
     right_query = Select(
         'Teacher t', id=PrimaryKey,
-        name=eq('Joey Tribbiani')
+        name=where_func('Joey Tribbiani')
     )
+    if not left_query:
+        left_query = left_query_neo4j()
     right_query.join_type = JoinType.RIGHT
     return Select(
-        'Class c', student_id=Select(
-            'Student s', id=PrimaryKey,
-        ), teacher_id=right_query
+        'Class c', student_id=left_query, teacher_id=right_query
     )
 
 def script_from_neo4j_query() -> str:
@@ -166,3 +175,17 @@ def script_from_neo4j_query() -> str:
 
 def script_mongo_from(query: Select) -> str:
     return query.translate_to(MongoDBLanguage)
+
+def neo4j_with_WHERE() -> list[Select]:
+    WHERE_APPENDIX = '''WHERE
+        s.age > 18 AND
+        t.name <> "Joey Tribbiani"
+    '''
+    txt = NEO4J_FORMAT.format('', WHERE_APPENDIX)
+    s, c, t = neo4j_queries(txt)
+    return (s + c + t)
+
+def query_for_WHERE_neo4j():
+    query = left_query_neo4j()
+    query(age=gt(18))
+    return query_for_neo4J(Not.eq, query)

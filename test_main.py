@@ -21,7 +21,8 @@ from tests.special_cases import (
     added_object_changes, query_for_cypher, cypher_query,
     mongo_query, query_for_mongo, mongo_group, group_for_mongo,
     neo4j_queries, query_for_neo4J, neo4j_joined_query,
-    script_from_neo4j_query, script_mongo_from
+    script_from_neo4j_query, script_mongo_from,
+    neo4j_with_WHERE, query_for_WHERE_neo4j
 )
 
 
@@ -159,4 +160,9 @@ def test_mongo_group_rtrip():
     q2 = mongo_group(
         script_mongo_from(q1)
     )
+    assert q1 == q2
+
+def test_neo4J_with_WHERE():
+    q1 = neo4j_with_WHERE()
+    q2 = query_for_WHERE_neo4j()
     assert q1 == q2
