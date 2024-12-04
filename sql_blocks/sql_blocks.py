@@ -442,7 +442,10 @@ class QueryLanguage:
         return  self.join_with_tabs(values, ' AND ')
 
     def sort_by(self, values: list) -> str:
-        return  self.join_with_tabs(values)
+        return '{}{}'.format(
+            self.join_with_tabs(values),
+            OrderBy.sort.value
+        )
 
     def set_group(self, values: list) -> str:
         return  self.join_with_tabs(values, ',')
@@ -576,6 +579,8 @@ class Neo4JLanguage(QueryLanguage):
     has_default = {WHERE: False, FROM: False, ORDER_BY: True, SELECT: True}
 
     def add_field(self, values: list) -> str:
+        if values:
+            return self.join_with_tabs(values, ',')
         return self.TABULATION + ','.join(self.aliases.keys())
 
     def get_tables(self, values: list) -> str:
@@ -626,12 +631,6 @@ class Neo4JLanguage(QueryLanguage):
             self.has_default[WHERE] = True
             return self.LINE_BREAK
         return self.join_with_tabs(where_list, ' AND ') + self.LINE_BREAK
-
-    def sort_by(self, values: list) -> str:
-        return '{}{}'.format(
-            super().sort_by(values),
-            OrderBy.sort.value
-        )
 
     def set_group(self, values: list) -> str:
         return ''
@@ -1202,13 +1201,13 @@ if __name__ == "__main__":
     query = Select(
         'Class c',
         student_id=get_side(
-            'SELECT * FROM Student s WHERE s.age > 18', 
+            'SELECT name, user_id FROM Student s WHERE s.age > 18', 
             SQLParser, JoinType.LEFT
         ),
         teacher_id=get_side(
             '''db.Teacher.find({
                 name: {$ne: "Joey Tribbiani"}
-            }).sort({
+            }, {name: 1, experience: i}).sort({
                 experience: -1
             })''', 
             MongoParser, JoinType.RIGHT
