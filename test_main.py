@@ -22,7 +22,7 @@ from tests.special_cases import (
     mongo_query, query_for_mongo, mongo_group, group_for_mongo,
     neo4j_queries, query_for_neo4J, neo4j_joined_query,
     script_from_neo4j_query, script_mongo_from,
-    neo4j_with_WHERE, query_for_WHERE_neo4j
+    neo4j_with_WHERE, query_for_WHERE_neo4j, group_cypher, cypher_group
 )
 
 
@@ -166,3 +166,9 @@ def test_neo4J_with_WHERE():
     q1 = neo4j_with_WHERE()
     q2 = query_for_WHERE_neo4j()
     assert q1 == q2
+
+def test_group_cypher():
+    q1 = group_cypher()
+    q2 = cypher_group()
+    assert q1 == q2
+

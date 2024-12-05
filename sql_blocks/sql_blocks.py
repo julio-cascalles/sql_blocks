@@ -788,13 +788,16 @@ class Cypher(Parser):
         self.aliases = {}
 
     def new_query(self, token: str, join_type = JoinType.INNER, alias: str=''):
-        if token.isidentifier():
-            query = self.class_type(token)
-            if not alias:
-                alias = query.alias
-            self.queries.append(query)
-            self.aliases[alias] = query
-            query.join_type = join_type
+        token, *group_fields = token.split('@')
+        if not token.isidentifier():
+            return
+        query = self.class_type(token)
+        if not alias:
+            alias = query.alias
+        self.queries.append(query)
+        self.aliases[alias] = query
+        FieldList(group_fields, [Field, GroupBy]).add('', query)
+        query.join_type = join_type
 
     def add_where(self, token: str):
         elements = [t for t in self.REGEX['alias_pos'].split(token) if t]
@@ -809,10 +812,22 @@ class Cypher(Parser):
         Where(' '.join(condition)).add(field, query)
     
     def add_order(self, token: str):
-        FieldList(token, [Field, OrderBy]).add('', self.queries[-1])
+        self.add_field(token, [OrderBy])
 
-    def add_field(self, token: str):
-        FieldList(token, [Field]).add('', self.queries[-1])
+    def add_field(self, token: str, extra_classes: list['type']=[]):
+        class_list = [Field]
+        if '$' in token:
+            func_name, token = token.split('$')
+            if func_name == 'count':
+                if not token:
+                    token = 'count_1'
+                NamedField(token, Count).add('*', self.queries[-1])
+                class_list = []
+            else:
+                FUNCTION_CLASS = {f.__name__.lower(): f for f in Function.__subclasses__()}
+                class_list = [ FUNCTION_CLASS[func_name] ]
+        class_list += extra_classes
+        FieldList(token, class_list).add('', self.queries[-1])
 
     def left_ftable(self, token: str):
         if self.queries:
@@ -840,8 +855,11 @@ class Cypher(Parser):
                 raise IndexError(f'Foreign Key not found for {curr.table_name}.')
             foreign_fld = curr.values[SELECT][0].split('.')[-1]
             curr.delete(foreign_fld, [SELECT])
+            if curr.join_type == JoinType.RIGHT:
+                pk_field, foreign_fld = foreign_fld, pk_field
         if curr.join_type == JoinType.RIGHT:
             curr, last = last, curr
+            # pk_field, foreign_fld = foreign_fld, pk_field
         k = ForeignKey.get_key(curr, last)
         ForeignKey.references[k] = (foreign_fld, pk_field)
 
@@ -1190,34 +1208,10 @@ class RuleDateFuncReplace(Rule):
             target.values[WHERE][i] = ' AND '.join(temp.values[WHERE])
 
 
-if __name__ == "__main__":
-    SQLObject.ALIAS_FUNC = lambda t: t[0].lower()
-    def get_side(script: str, parser: Parser, side: JoinType):
-        query = Select.parse(script, parser)[0]
-        query(id=PrimaryKey)
-        query.join_type = side
-        return query
-    # -----------------------------------------------------
-    query = Select(
-        'Class c',
-        student_id=get_side(
-            'SELECT name, user_id FROM Student s WHERE s.age > 18', 
-            SQLParser, JoinType.LEFT
-        ),
-        teacher_id=get_side(
-            '''db.Teacher.find({
-                name: {$ne: "Joey Tribbiani"}
-            }, {name: 1, experience: i}).sort({
-                experience: -1
-            })''', 
-            MongoParser, JoinType.RIGHT
-        )
-    )
-    print(query)
-    result = query.translate_to(
-        Neo4JLanguage
-    )
-    # -----------------------------------------------------
-    print('¤'*50)
-    print(result)
-    print('¤'*50)
+def cypher(text: str) -> Select:
+    query_list = Select.parse(text, Cypher)
+    result = query_list[0]
+    for query in query_list[1:]:
+        result += query
+    return result
+

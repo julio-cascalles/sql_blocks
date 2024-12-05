@@ -189,3 +189,12 @@ def query_for_WHERE_neo4j():
     query = left_query_neo4j()
     query(age=gt(18))
     return query_for_neo4J(Not.eq, query)
+
+def group_cypher() -> Select:
+    return Select(
+        'People', age=Avg, gender=[GroupBy, Field],
+        _=NamedField('qtde', Count), region=eq('SOUTH'), qtde=OrderBy
+    )
+
+def cypher_group() -> Select:
+    return cypher('People@gender(avg$age?region="SOUTH"^count$qtde)')
