@@ -815,6 +815,8 @@ class Cypher(Parser):
         self.add_field(token, [OrderBy])
 
     def add_field(self, token: str, extra_classes: list['type']=[]):
+        if token in self.TOKEN_METHODS:
+            return
         class_list = [Field]
         if '$' in token:
             func_name, token = token.split('$')
@@ -1215,3 +1217,6 @@ def cypher(text: str) -> Select:
         result += query
     return result
 
+
+if __name__ == "__main__":
+    print( cypher('Customer(^region,id)<-Order(cus_id,pro_id)->Product(id?price > 100)') )
