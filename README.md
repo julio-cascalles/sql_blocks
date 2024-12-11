@@ -402,3 +402,83 @@ ORDER BY
 * `<-` connects to the table on the left
 * `->` connects to the table on the right
 * `^` Put the field in the ORDER BY clause
+* `@` Immediately after the table name, it indicates the grouping field.
+* `$` For SQL functions like **avg**$_field_, **sum**$_field_, **count**$_field_...
+
+
+---
+## `detect` function
+
+It is useful to write a query in a few lines, without specifying the script type (cypher, mongoDB, SQL, Neo4J...)
+### Examples:
+
+> **1 - Relationship**
+```
+query = detect(
+    'MATCH(c:Customer)<-[:Order]->(p:Product)RETURN c, p'
+)
+print(query)
+```
+##### output:
+    SELECT * FROM
+        Order ord
+        LEFT JOIN Customer cus ON (ord.customer_id = cus.id)
+        RIGHT JOIN Product pro ON (ord.product_id = pro.id)
+> **2 - Grouping**
+```
+query = detect(
+    'People@gender(avg$age?region="SOUTH"^count$qtde)'
+)
+print(query)
+```
+##### output:
+    SELECT
+            peo.gender,
+            Avg(peo.age),
+            Count(*) as qtde
+    FROM
+            People peo
+    WHERE
+            peo.region = "SOUTH"
+    GROUP BY
+            peo.gender
+    ORDER BY
+            peo.qtde
+
+> **3 - Many conditions...**
+```
+    print( detect('''
+        db.people.find({
+            {
+                $or: [
+                    status:{$eq:"B"},
+                    age:{$lt:50}
+                ]
+            },
+            age:{$gte:18},  status:{$eq:"A"}
+        },{
+            name: 1, user_id: 1
+        }).sort({
+            user_id: -1
+        })
+    ''') )
+```
+#### output:
+    SELECT
+            peo.name,
+            peo.user_id
+    FROM
+            people peo
+    WHERE
+            ( peo. = 'B' OR peo.age < 50 ) AND
+            peo.age >= 18 AND
+            peo.status = 'A'
+    ORDER BY
+            peo.user_id DESC
+
+---
+### `translate_to` method
+It consists of the inverse process of parsing: From a Select object, it returns the text to a script in any of the languages ​​below:
+* QueryLanguage - default
+* MongoDBLanguage
+* Neo4JLanguage

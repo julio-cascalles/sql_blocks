@@ -442,10 +442,7 @@ class QueryLanguage:
         return  self.join_with_tabs(values, ' AND ')
 
     def sort_by(self, values: list) -> str:
-        return '{}{}'.format(
-            self.join_with_tabs(values),
-            OrderBy.sort.value
-        )
+        return self.join_with_tabs(values)
 
     def set_group(self, values: list) -> str:
         return  self.join_with_tabs(values, ',')
@@ -765,7 +762,7 @@ class SQLParser(Parser):
         self.queries = list( result.values() )
 
 
-class Cypher(Parser):
+class CypherParser(Parser):
     REGEX = {}
     CHAR_SET = r'[(,?)^{}[\]]'
     KEYWORDS = '|'.join(
@@ -887,7 +884,7 @@ class Cypher(Parser):
             self.method = self.TOKEN_METHODS.get(token.upper())
         # ====================================
 
-class Neo4JParser(Cypher):
+class Neo4JParser(CypherParser):
     def prepare(self):
         super().prepare()
         self.TOKEN_METHODS = {
@@ -1210,8 +1207,23 @@ class RuleDateFuncReplace(Rule):
             target.values[WHERE][i] = ' AND '.join(temp.values[WHERE])
 
 
-def cypher(text: str) -> Select:
-    query_list = Select.parse(text, Cypher)
+def parser_class(text: str) -> Parser:
+    PARSER_REGEX = [
+        (r'select.*from', SQLParser),
+        (r'[.](find|aggregate)[(]', MongoParser),
+        (r'[(\[]\w*[:]\w+', Neo4JParser),
+        (r'^\w+[@]*\w*[(]', CypherParser)
+    ]
+    text = Parser.remove_spaces(text)
+    for regex, class_type in PARSER_REGEX:
+        if re.findall(regex, text, re.IGNORECASE):
+            return class_type
+    # raise SyntaxError('Unknown parser class')
+    return None
+
+
+def detect(text: str) -> Select:    
+    query_list = Select.parse(text, parser_class(text))
     result = query_list[0]
     for query in query_list[1:]:
         result += query
@@ -1219,4 +1231,20 @@ def cypher(text: str) -> Select:
 
 
 if __name__ == "__main__":
-    print( cypher('Customer(^region,id)<-Order(cus_id,pro_id)->Product(id?price > 100)') )
+    print('@'*100)
+    print( detect('''
+        db.people.find({
+                {
+                    $or: [
+                        status:{$eq:"B"},
+                        age:{$lt:50}
+                    ]
+                },
+                age:{$gte:18},  status:{$eq:"A"}
+        },{
+                name: 1, user_id: 1
+        }).sort({
+                user_id: -1
+        })
+    ''') )
+    print('@'*100)

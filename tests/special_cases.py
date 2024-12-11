@@ -80,23 +80,17 @@ def query_for_cypher() -> Select:
         ), teacher_id=right_query
     )
 
-def cypher_query() -> Select:
-    SQLObject.ALIAS_FUNC = lambda t: t[0].lower()
-    ForeignKey.references = {}
-    CYPHER_SCRIPT = """
-        Student(
-            name ? age = 16, enrollment
-        ) <- Class(
-            student_id,
-            teacher_id
-        ) ->
-        Teacher(
-            social_security, name ^subject
-        )
-    """
-    student, _class, teacher = Select.parse(CYPHER_SCRIPT, Cypher)
-    return student + _class + teacher
-
+CYPHER_SCRIPT = """
+    Student(
+        name ? age = 16, enrollment
+    ) <- Class(
+        student_id,
+        teacher_id
+    ) ->
+    Teacher(
+        social_security, name ^subject
+    )
+"""
 MONGODB_SCRIPT_FIND = '''
     db.people.find({
             {
@@ -127,6 +121,12 @@ NEO4J_FORMAT = '''
 NEO4J_SCRIPT = NEO4J_FORMAT.format(
     '{name:"Joey Tribbiani"}', ''
 )
+
+def cypher_query() -> Select:
+    SQLObject.ALIAS_FUNC = lambda t: t[0].lower()
+    ForeignKey.references = {}
+    student, _class, teacher = Select.parse(CYPHER_SCRIPT, CypherParser)
+    return student + _class + teacher
 
 def mongo_query(script: str = MONGODB_SCRIPT_FIND) -> Select:
     return Select.parse(script, MongoParser)[0]
@@ -197,4 +197,17 @@ def group_cypher() -> Select:
     )
 
 def cypher_group() -> Select:
-    return cypher('People@gender(avg$age?region="SOUTH"^count$qtde)')
+    return detect('People@gender(avg$age?region="SOUTH"^count$qtde)')
+
+def detected_parser_classes() -> bool:
+    CASES = [
+        ('SELECT * FROM product',  SQLParser),
+        (MONGODB_SCRIPT_FIND,  MongoParser),
+        (NEO4J_SCRIPT,  Neo4JParser),
+        (CYPHER_SCRIPT,  CypherParser),
+    ]
+    for script, class_type in CASES:
+        pc =  parser_class(script)
+        if pc != class_type:
+            return False
+    return True
