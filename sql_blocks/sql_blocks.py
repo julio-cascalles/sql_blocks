@@ -219,6 +219,7 @@ class ForeignKey:
 
     @staticmethod
     def get_key(obj1: SQLObject, obj2: SQLObject) -> tuple:
+        # [To-Do] including alias will allow to relate the same table twice
         return obj1.table_name, obj2.table_name
 
     def add(self, name: str, main: SQLObject):
@@ -788,7 +789,8 @@ class CypherParser(Parser):
         token, *group_fields = token.split('@')
         if not token.isidentifier():
             return
-        query = self.class_type(token)
+        table_name = f'{token} {alias}' if alias else token
+        query = self.class_type(table_name)
         if not alias:
             alias = query.alias
         self.queries.append(query)
@@ -1232,19 +1234,6 @@ def detect(text: str) -> Select:
 
 if __name__ == "__main__":
     print('@'*100)
-    print( detect('''
-        db.people.find({
-                {
-                    $or: [
-                        status:{$eq:"B"},
-                        age:{$lt:50}
-                    ]
-                },
-                age:{$gte:18},  status:{$eq:"A"}
-        },{
-                name: 1, user_id: 1
-        }).sort({
-                user_id: -1
-        })
-    ''') )
+    # print( detect('(c:Customer)<-[o:Order]->(p:Product)') )
+    print( detect('(p1:Person)<-[c:Contact]->(p2:Person)') )
     print('@'*100)
