@@ -1029,6 +1029,7 @@ class MongoParser(Parser):
 class Select(SQLObject):
     join_type: JoinType = JoinType.INNER
     REGEX = {}
+    EQUIVALENT_NAMES = {}
 
     def __init__(self, table_name: str='', **values):
         super().__init__(table_name)
@@ -1044,7 +1045,7 @@ class Select(SQLObject):
         new_tables = set([
             '{jt}JOIN {tb} {a2} ON ({a1}.{f1} = {a2}.{f2})'.format(
                 jt=self.join_type.value,
-                tb=self.table_name,
+                tb=self.EQUIVALENT_NAMES.get(self.table_name, self.table_name),
                 a1=main.alias, f1=name,
                 a2=self.alias, f2=self.key_field
             )
@@ -1234,6 +1235,9 @@ def detect(text: str) -> Select:
 
 if __name__ == "__main__":
     print('@'*100)
-    # print( detect('(c:Customer)<-[o:Order]->(p:Product)') )
-    print( detect('(p1:Person)<-[c:Contact]->(p2:Person)') )
+    Select.EQUIVALENT_NAMES['Person_1'] = 'Person'
+    Select.EQUIVALENT_NAMES['Person_2'] = 'Person'
+    print( detect(
+        'Person_1(name, id)<-Contact(requester, guest)->Person_2(id, name)'
+    ) )
     print('@'*100)
