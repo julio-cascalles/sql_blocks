@@ -1235,7 +1235,7 @@ def detect(text: str) -> Select:
                 continue
             pos = [ f.span() for f in re.finditer(fr'({table})[(]', text) ]
             for begin, end in pos[::-1]:
-                new_name = f'{table}_{count}'
+                new_name = f'{table}_{count}'  # See set_table (line 45)
                 Select.EQUIVALENT_NAMES[new_name] = table
                 text = text[:begin] + new_name + '(' + text[end:]
                 count -= 1
