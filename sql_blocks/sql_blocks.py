@@ -1221,12 +1221,25 @@ def parser_class(text: str) -> Parser:
     for regex, class_type in PARSER_REGEX:
         if re.findall(regex, text, re.IGNORECASE):
             return class_type
-    # raise SyntaxError('Unknown parser class')
     return None
 
 
 def detect(text: str) -> Select:    
-    query_list = Select.parse(text, parser_class(text))
+    from collections import Counter
+    parser = parser_class(text)
+    if not parser:
+        raise SyntaxError('Unknown parser class')
+    if parser == CypherParser:
+        for table, count in Counter( re.findall(r'(\w+)[(]', text) ).most_common():
+            if count < 2:
+                continue
+            pos = [ f.span() for f in re.finditer(fr'({table})[(]', text) ]
+            for begin, end in pos[::-1]:
+                new_name = f'{table}_{count}'
+                Select.EQUIVALENT_NAMES[new_name] = table
+                text = text[:begin] + new_name + '(' + text[end:]
+                count -= 1
+    query_list = Select.parse(text, parser)
     result = query_list[0]
     for query in query_list[1:]:
         result += query
@@ -1235,9 +1248,7 @@ def detect(text: str) -> Select:
 
 if __name__ == "__main__":
     print('@'*100)
-    Select.EQUIVALENT_NAMES['Person_1'] = 'Person'
-    Select.EQUIVALENT_NAMES['Person_2'] = 'Person'
     print( detect(
-        'Person_1(name, id)<-Contact(requester, guest)->Person_2(id, name)'
+        'Person(^user?role="Manager",id)<-Contact(requester, guest)->Person(id,name)'
     ) )
     print('@'*100)
