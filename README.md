@@ -476,6 +476,25 @@ print(query)
     ORDER BY
             peo.user_id DESC
 
+> **4 - Relations with same table twice (or more)**
+
+Automatically assigns aliases to each side of the relationship (In this example, one user invites another to add to their contact list)
+```
+    print( detect(
+        'User(^name,id) <-Contact(requester,guest)-> User(id,name)'
+       # ^^^ u1                                        ^^^ u2
+    ) )
+```
+    SELECT
+            u1.name,
+            u2.name
+    FROM
+            Contact con
+            RIGHT JOIN User u2 ON (con.guest = u2.id)
+            LEFT JOIN User u1 ON (con.requester = u1.id)
+    ORDER BY
+            u1.name
+
 ---
 ### `translate_to` method
 It consists of the inverse process of parsing: From a Select object, it returns the text to a script in any of the languages ​​below:

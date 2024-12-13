@@ -1249,6 +1249,7 @@ def detect(text: str) -> Select:
 if __name__ == "__main__":
     print('@'*100)
     print( detect(
-        'Person(^user?role="Manager",id)<-Contact(requester, guest)->Person(id,name)'
+        # 'User(^name?role="Manager",id)<-Contact(requester, guest)->User(id,name)'
+        'User(^name,id) <-Contact(requester,guest)-> User(id,name)'
     ) )
     print('@'*100)
