@@ -63,7 +63,7 @@ class SQLObject:
  
     @staticmethod
     def get_separator(key: str) -> str:
-        appendix = {WHERE: 'and|', FROM: 'join|JOIN'}
+        appendix = {WHERE: '\band\b|', FROM: '\bjoin\b|\bJOIN\b'}
         return KEYWORD[key][0].format(appendix.get(key, ''))
 
     def diff(self, key: str, search_list: list, exact: bool=False) -> set:
@@ -79,7 +79,7 @@ class SQLObject:
                 fld = fld.lower()
             return fld.strip()
         def is_named_field(fld: str) -> bool:
-            return key == SELECT and re.search(' as | AS ', fld)
+            return key == SELECT and re.search('\bas\b|\bAS\b', fld)
         def field_set(source: list) -> set:
             return set(
                 (
@@ -476,6 +476,10 @@ class QueryLanguage:
             if not method or (not values and not self.has_default[key]):
                 self.result[ref] = ''
                 continue
+            if key == FROM:
+                values[0] = '{} {}'.format(
+                    self.target.aka(), self.target.alias
+                ).strip()
             text = method(values)
             self.result[ref] = self.prefix(key) + text
         return self.pattern.format(**self.result).strip()
@@ -767,7 +771,7 @@ class CypherParser(Parser):
     REGEX = {}
     CHAR_SET = r'[(,?)^{}[\]]'
     KEYWORDS = '|'.join(
-        fr'\s+{word}\s+'
+        fr'\b{word}\b'
         for word in "where return WHERE RETURN and AND".split()
     )
 
@@ -1040,12 +1044,16 @@ class Select(SQLObject):
         for value in self.diff(key, new_values):
             self.values.setdefault(key, []).append(value)
 
+    def aka(self) -> str:
+        result = self.table_name
+        return self.EQUIVALENT_NAMES.get(result, result)
+
     def add(self, name: str, main: SQLObject):
         old_tables = main.values.get(FROM, [])
         new_tables = set([
             '{jt}JOIN {tb} {a2} ON ({a1}.{f1} = {a2}.{f2})'.format(
                 jt=self.join_type.value,
-                tb=self.EQUIVALENT_NAMES.get(self.table_name, self.table_name),
+                tb=self.aka(),
                 a1=main.alias, f1=name,
                 a2=self.alias, f2=self.key_field
             )
@@ -1250,6 +1258,11 @@ if __name__ == "__main__":
     print('@'*100)
     print( detect(
         # 'User(^name?role="Manager",id)<-Contact(requester, guest)->User(id,name)'
-        'User(^name,id) <-Contact(requester,guest)-> User(id,name)'
+        #'User(^name,id) <-Contact(requester,guest)-> User(id,name)'
+        '''
+            Empresa(?vagas > 10, id)
+            <- Pessoa(trabalha_em ^nome, amigo_de) ->
+            Pessoa(id ?situacao="procurando emprego")
+        '''
     ) )
     print('@'*100)
