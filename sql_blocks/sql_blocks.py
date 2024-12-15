@@ -63,7 +63,7 @@ class SQLObject:
  
     @staticmethod
     def get_separator(key: str) -> str:
-        appendix = {WHERE: '\band\b|', FROM: '\bjoin\b|\bJOIN\b'}
+        appendix = {WHERE: r'\s+and\s+|', FROM: r'\s+join\s+|\s+JOIN\s+'}
         return KEYWORD[key][0].format(appendix.get(key, ''))
 
     def diff(self, key: str, search_list: list, exact: bool=False) -> set:
@@ -79,7 +79,7 @@ class SQLObject:
                 fld = fld.lower()
             return fld.strip()
         def is_named_field(fld: str) -> bool:
-            return key == SELECT and re.search('\bas\b|\bAS\b', fld)
+            return key == SELECT and re.search(r'\s+as\s+|\s+AS\s+', fld)
         def field_set(source: list) -> set:
             return set(
                 (
@@ -1257,12 +1257,10 @@ def detect(text: str) -> Select:
 if __name__ == "__main__":
     print('@'*100)
     print( detect(
-        # 'User(^name?role="Manager",id)<-Contact(requester, guest)->User(id,name)'
-        #'User(^name,id) <-Contact(requester,guest)-> User(id,name)'
         '''
-            Empresa(?vagas > 10, id)
-            <- Pessoa(trabalha_em ^nome, amigo_de) ->
-            Pessoa(id ?situacao="procurando emprego")
-        '''
+            Company(?jobs > 10, id)
+            <- Person(work_at ^name, friend_of) ->
+            Person(id ?skill="pANDas")
+        '''                #   ^^^---- Test for confusion with the AND operator
     ) )
     print('@'*100)

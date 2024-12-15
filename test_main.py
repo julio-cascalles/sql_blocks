@@ -52,6 +52,11 @@ def test_many_texts():
 def test_same_table():
     p1 = two_queries_same_table()
     p2 = select_product()
+    print('░▒▓▒░'*10)
+    print(p1)
+    print('='*50)
+    print(p2)
+    print('░▒▓▒░'*10)
     assert p1 == p2
 
 def test_subquery_Genres():
