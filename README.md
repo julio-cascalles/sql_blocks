@@ -375,7 +375,7 @@ a, c, m = Select.parse(
         <- Cast(actor_id, movie_id) ->
         Movie(id ^title)
     """,
-    Cypher 
+    CypherParser
     # ^^^ recognizes syntax like Neo4J queries
 )
 ```
@@ -451,7 +451,7 @@ print(query)
         db.people.find({
             {
                 $or: [
-                    status:{$eq:"B"},
+                    {status:{$eq:"B"}},
                     age:{$lt:50}
                 ]
             },
