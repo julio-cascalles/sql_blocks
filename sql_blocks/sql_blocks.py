@@ -369,10 +369,14 @@ class OrderBy:
     sort: SortType = SortType.ASC
     @classmethod
     def add(cls, name: str, main: SQLObject):
+        def is_function() -> bool:
+            diff = main.diff(SELECT, [name.lower()], True)
+            FUNCTION_CLASS = {f.__name__.lower(): f for f in Function.__subclasses__()}
+            return diff.intersection(FUNCTION_CLASS)
         found = re.findall(r'^_\d', name)
         if found:
             name = found[0].replace('_', '')
-        elif main.alias:
+        elif main.alias and not is_function():
             name = f'{main.alias}.{name}'
         main.values.setdefault(ORDER_BY, []).append(name+cls.sort.value)
 
@@ -858,7 +862,11 @@ class CypherParser(Parser):
         else:
             if not curr.values.get(SELECT):
                 raise IndexError(f'Foreign Key not found for {curr.table_name}.')
-            foreign_fld = curr.values[SELECT][0].split('.')[-1]
+            fields = [
+                fld for fld in curr.values[SELECT]
+                if fld not in curr.values.get(GROUP_BY, [])
+            ]
+            foreign_fld = fields[0].split('.')[-1]
             curr.delete(foreign_fld, [SELECT])
             if curr.join_type == JoinType.RIGHT:
                 pk_field, foreign_fld = foreign_fld, pk_field
@@ -1255,12 +1263,19 @@ def detect(text: str) -> Select:
 
 
 if __name__ == "__main__":
-    print('@'*100)
-    print( detect(
+    print('░▒▓▒░'*20)
+    p, c, a = Select.parse(
         '''
-            Company(?jobs > 10, id)
-            <- Person(work_at ^name, friend_of) ->
-            Person(id ?skill="pANDas")
-        '''                #   ^^^---- Test for confusion with the AND operator
-    ) )
-    print('@'*100)
+            Professor(?nome="Júlio Cascalles", id)
+            <- Curso@disciplina(professor, aluno) ->
+            Aluno(id ^count$qtd_alunos)
+        ''', CypherParser
+    )
+    print(p)
+    print('-'*50)
+    print(c)
+    print('-'*50)
+    print(a)
+    print('='*50)
+    print(a + c + p)
+    print('░▒▓▒░'*20)
