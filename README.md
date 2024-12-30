@@ -412,7 +412,7 @@ ORDER BY
 It is useful to write a query in a few lines, without specifying the script type (cypher, mongoDB, SQL, Neo4J...)
 ### Examples:
 
-> **1 - Relationship**
+> **13.1 - Relationship**
 ```
 query = detect(
     'MATCH(c:Customer)<-[:Order]->(p:Product)RETURN c, p'
@@ -424,7 +424,7 @@ print(query)
         Order ord
         LEFT JOIN Customer cus ON (ord.customer_id = cus.id)
         RIGHT JOIN Product pro ON (ord.product_id = pro.id)
-> **2 - Grouping**
+> **13.2 - Grouping**
 ```
 query = detect(
     'People@gender(avg$age?region="SOUTH"^count$qtde)'
@@ -445,7 +445,7 @@ print(query)
     ORDER BY
             peo.qtde
 
-> **3 - Many conditions...**
+> **13.3 - Many conditions...**
 ```
     print( detect('''
         db.people.find({
@@ -476,7 +476,7 @@ print(query)
     ORDER BY
             peo.user_id DESC
 
-> **4 - Relations with same table twice (or more)**
+> **13.4 - Relations with same table twice (or more)**
 
 Automatically assigns aliases to each side of the relationship (In this example, one user invites another to add to their contact list)
 ```
@@ -501,3 +501,54 @@ It consists of the inverse process of parsing: From a Select object, it returns 
 * QueryLanguage - default
 * MongoDBLanguage
 * Neo4JLanguage
+
+---
+### 14 - Window Function
+
+Aggregation functions (Avg, Min, Max, Sum, Count) have the **over** method...
+
+    query=Select(
+        'Enrollment e',
+        payment=Sum().over(
+            partition='student_id', order='due_date'
+        ).As('sum_per_student')
+    )
+
+...that generates the following query:
+
+```
+SELECT
+        Sum(e.payment) OVER(
+                PARTITION BY student_id
+                ORDER BY due_date
+        ) as sum_per_student
+FROM
+        Enrollment e
+```
+---
+### 15 - The `As` method:
+    query=Select(
+        'Customers c',
+        phone=[
+            Not.is_null(),
+            SubString(1, 4).As('area_code', GroupBy)
+        ],
+        customer_id=[
+            Count().As('customer_count', OrderBy),
+            Having.count(gt(5))
+        ]
+    )
+You can use the result of a function as a new field -- and optionally use it in ORDER BY and/or GROUP BY clause(s):
+```
+SELECT
+        SubString(c.phone, 1, 4) as area_code,
+        Count(c.customer_id) as customer_count
+FROM
+        Customers c
+WHERE
+        NOT c.phone IS NULL
+GROUP BY
+        area_code HAVING Count(c.customer_id) > 5
+ORDER BY
+        customer_count
+```

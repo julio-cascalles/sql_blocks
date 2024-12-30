@@ -158,20 +158,23 @@ class Function:
         Function.instance[func_name] = self
         self.params = [str(p) for p in params]
         self.class_type = Field
+        self.pattern = '{}({})'
         self.extra = {}
     
     def As(self, field_alias: str, modifiers=None):
-        for mod in TO_LIST(modifiers):
-            self.extra[field_alias] = mod
+        if modifiers:
+            for mod in TO_LIST(modifiers):
+                self.extra[field_alias] = mod
         self.class_type = NamedField(field_alias)
         return self
 
     @classmethod
     def format(cls, name: str, main: SQLObject) -> str:
+        obj = cls.get_instance()
         params = [
             Field.format(name, main)
-        ] + cls.get_instance().params
-        return '{}({})'.format(
+        ] + obj.params
+        return obj.pattern.format(
             cls.__name__,
             ', '.join(params)
         )
@@ -213,8 +216,21 @@ class Current_Date(Function):
     ...
 
 class Aggregate:
-    def over(self):
+    break_lines: bool = True
+
+    def over(self, **args):
+        keywords = ' '.join(
+            '{}{} BY {}'.format(
+                '\n\t\t' if self.break_lines else '',
+                key.upper(), args[key]
+            ) for key in ('partition', 'order')
+            if key in args
+        )
+        if keywords and self.break_lines:
+            keywords += '\n\t'
+        self.pattern = '{}({})' + f' OVER({keywords})'
         return self
+
 
 # ---- Aggregate Functions: -------------------------------
 class Avg(Aggregate, Function):
@@ -1341,18 +1357,3 @@ def detect(text: str) -> Select:
     for query in query_list[1:]:
         result += query
     return result
-
-
-if __name__ == "__main__":
-    query=Select(
-        'Clientes c',
-        telefone=[
-            Not.is_null(),
-            SubString(1,4).As('codigo_area', GroupBy)
-        ],
-        id_cliente=[
-            Count().As('total_clientes', OrderBy),
-            Having.count(gt(5))
-        ]
-    )
-    print(query)

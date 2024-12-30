@@ -25,7 +25,9 @@ from tests.special_cases import (
     neo4j_with_WHERE, query_for_WHERE_neo4j, 
     group_cypher, cypher_group, detected_parser_classes
 )
-
+from tests.functions import (
+    diff_over_sum, function_fields
+)
 
 _best_movies = best_movies()
 query = {}
@@ -52,11 +54,6 @@ def test_many_texts():
 def test_same_table():
     p1 = two_queries_same_table()
     p2 = select_product()
-    print('░▒▓▒░'*10)
-    print(p1)
-    print('='*50)
-    print(p2)
-    print('░▒▓▒░'*10)
     assert p1 == p2
 
 def test_subquery_Genres():
@@ -178,3 +175,18 @@ def test_group_cypher():
 
 def test_parser_classes():
     assert detected_parser_classes()
+
+def test_over():
+    expected = {
+        'sum',
+        'partition by student_id order by due_date',
+        ' as sum_per_student'
+    }
+    assert diff_over_sum().intersection(expected) == expected
+
+def test_function_fields():
+    expected = [
+        'SubString(c.phone, 1, 4) as area_code',
+        'Count(c.customer_id) as customer_count'
+    ]
+    assert function_fields() == expected
