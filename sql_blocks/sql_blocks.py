@@ -22,6 +22,7 @@ KEYWORD = {
 
 SELECT, FROM, WHERE, GROUP_BY, ORDER_BY, LIMIT = KEYWORD.keys()
 USUAL_KEYS = [SELECT, WHERE, GROUP_BY, ORDER_BY, LIMIT]
+TO_LIST = lambda x: x if isinstance(x, list) else [x]
 
 
 class SQLObject:
@@ -110,9 +111,6 @@ class SQLObject:
             self.values[key] = result
 
 
-class Function:
-    ...
-
 class Field:
     prefix = ''
 
@@ -134,17 +132,6 @@ class Field:
         )
 
 
-class Avg(Function, Field):
-    ...
-class Min(Function, Field):
-    ...
-class Max(Function, Field):
-    ...
-class Sum(Function, Field):
-    ...
-class Count(Function, Field):
-    ...
-
 class Distinct(Field):
     prefix = 'DISTINCT '
 
@@ -161,6 +148,91 @@ class NamedField:
                 self.alias  # --- field alias
             )
         )
+
+
+class Function:
+    instance: dict = {}
+
+    def __init__(self, *params: list):
+        func_name = self.__class__.__name__
+        Function.instance[func_name] = self
+        self.params = [str(p) for p in params]
+        self.class_type = Field
+        self.extra = {}
+    
+    def As(self, field_alias: str, modifiers=None):
+        for mod in TO_LIST(modifiers):
+            self.extra[field_alias] = mod
+        self.class_type = NamedField(field_alias)
+        return self
+
+    @classmethod
+    def format(cls, name: str, main: SQLObject) -> str:
+        params = [
+            Field.format(name, main)
+        ] + cls.get_instance().params
+        return '{}({})'.format(
+            cls.__name__,
+            ', '.join(params)
+        )
+
+    def __add(self, name: str, main: SQLObject):
+        name = self.format(name, main)
+        self.class_type.add(name, main)
+        if self.extra:
+            main.__call__(**self.extra)
+
+    @classmethod
+    def get_instance(cls):
+        obj = Function.instance.get(cls.__name__)
+        if not obj:
+            obj = cls()
+        return obj
+
+    @classmethod
+    def add(cls, name: str, main: SQLObject):
+        cls.get_instance().__add(name, main)
+
+
+# ---- String Functions: ---------------------------------
+class SubString(Function):
+    ...
+
+# ---- Numeric Functions: --------------------------------
+class Round(Function):
+    ...
+
+# --- Date Functions: ------------------------------------
+class DateDiff(Function):
+    ...
+class Extract(Function):
+    ...
+class DatePart(Function):
+    ...
+class Current_Date(Function):
+    ...
+
+class Aggregate:
+    def over(self):
+        return self
+
+# ---- Aggregate Functions: -------------------------------
+class Avg(Aggregate, Function):
+    ...
+class Min(Aggregate, Function):
+    ...
+class Max(Aggregate, Function):
+    ...
+class Sum(Aggregate, Function):
+    ...
+class Count(Aggregate, Function):
+    ...
+
+# ---- Conversions and other Functions: ---------------------
+class Coalesce(Function):
+    ...
+class Cast(Function):
+    ...
 
 
 class ExpressionField:
@@ -361,14 +433,9 @@ class Between:
         Where.lte(self.end).add(name, main)
 
 
-class SortType(Enum):
-    ASC = ''
-    DESC = ' DESC'
-
-class OrderBy:
-    sort: SortType = SortType.ASC
+class Clause:
     @classmethod
-    def add(cls, name: str, main: SQLObject):
+    def format(cls, name: str, main: SQLObject) -> str:
         def is_function() -> bool:
             diff = main.diff(SELECT, [name.lower()], True)
             FUNCTION_CLASS = {f.__name__.lower(): f for f in Function.__subclasses__()}
@@ -378,13 +445,28 @@ class OrderBy:
             name = found[0].replace('_', '')
         elif main.alias and not is_function():
             name = f'{main.alias}.{name}'
+        return name
+
+
+class SortType(Enum):
+    ASC = ''
+    DESC = ' DESC'
+
+
+class OrderBy(Clause):
+    sort: SortType = SortType.ASC
+
+    @classmethod
+    def add(cls, name: str, main: SQLObject):
+        name = cls.format(name, main)
         main.values.setdefault(ORDER_BY, []).append(name+cls.sort.value)
 
 
-class GroupBy:
-    @staticmethod
-    def add(name: str, main: SQLObject):
-        main.values.setdefault(GROUP_BY, []).append(f'{main.alias}.{name}')
+class GroupBy(Clause):
+    @classmethod
+    def add(cls, name: str, main: SQLObject):
+        name = cls.format(name, main)
+        main.values.setdefault(GROUP_BY, []).append(name)
 
 
 class Having:
@@ -1095,9 +1177,8 @@ class Select(SQLObject):
         return self.translate_to(QueryLanguage)
    
     def __call__(self, **values):
-        to_list = lambda x: x if isinstance(x, list) else [x]
         for name, params in values.items():
-            for obj in to_list(params):
+            for obj in TO_LIST(params):
                 obj.add(name, self)
         return self
 
@@ -1263,19 +1344,15 @@ def detect(text: str) -> Select:
 
 
 if __name__ == "__main__":
-    print('░▒▓▒░'*20)
-    p, c, a = Select.parse(
-        '''
-            Professor(?nome="Júlio Cascalles", id)
-            <- Curso@disciplina(professor, aluno) ->
-            Aluno(id ^count$qtd_alunos)
-        ''', CypherParser
+    query=Select(
+        'Clientes c',
+        telefone=[
+            Not.is_null(),
+            SubString(1,4).As('codigo_area', GroupBy)
+        ],
+        id_cliente=[
+            Count().As('total_clientes', OrderBy),
+            Having.count(gt(5))
+        ]
     )
-    print(p)
-    print('-'*50)
-    print(c)
-    print('-'*50)
-    print(a)
-    print('='*50)
-    print(a + c + p)
-    print('░▒▓▒░'*20)
+    print(query)
