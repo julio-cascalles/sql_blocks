@@ -170,9 +170,12 @@ class Function:
     @classmethod
     def format(cls, name: str, main: SQLObject) -> str:
         obj = cls.get_instance()
-        params = [
-            Field.format(name, main)
-        ] + obj.params
+        if name in '*_' and obj.params:
+            params = obj.params
+        else:
+            params = [
+                Field.format(name, main)
+            ] + obj.params
         return obj.pattern.format(
             cls.__name__,
             ', '.join(params)
@@ -1356,3 +1359,12 @@ def detect(text: str) -> Select:
     for query in query_list[1:]:
         result += query
     return result
+
+if __name__ == "__main__":
+    OrderBy.sort = SortType.DESC
+    query = Select(
+        'order_Detail d',
+        customer_id=GroupBy,
+        _=Sum('d.unitPrice * d.quantity').As('total', OrderBy)
+    )
+    print(query)
