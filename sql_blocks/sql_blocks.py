@@ -163,8 +163,7 @@ class Function:
     
     def As(self, field_alias: str, modifiers=None):
         if modifiers:
-            for mod in TO_LIST(modifiers):
-                self.extra[field_alias] = mod
+            self.extra[field_alias] = TO_LIST(modifiers)
         self.class_type = NamedField(field_alias)
         return self
 
