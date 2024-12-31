@@ -151,52 +151,47 @@ class NamedField:
 
 
 class Function:
-    instance: dict = {}
-
     def __init__(self, *params: list):
-        func_name = self.__class__.__name__
-        Function.instance[func_name] = self
+        # --- Replace class methods by instance methods: ------
+        self.add = self.__add
+        self.format = self.__format
+        # -----------------------------------------------------
         self.params = [str(p) for p in params]
-        self.class_type = Field
+        self.field_class = Field
         self.pattern = '{}({})'
         self.extra = {}
     
     def As(self, field_alias: str, modifiers=None):
         if modifiers:
             self.extra[field_alias] = TO_LIST(modifiers)
-        self.class_type = NamedField(field_alias)
+        self.field_class = NamedField(field_alias)
         return self
 
-    @classmethod
-    def format(cls, name: str, main: SQLObject) -> str:
-        obj = cls.get_instance()
-        if name in '*_' and obj.params:
-            params = obj.params
+    def __format(self, name: str, main: SQLObject) -> str:
+        if name in '*_' and self.params:
+            params = self.params
         else:
             params = [
                 Field.format(name, main)
-            ] + obj.params
-        return obj.pattern.format(
-            cls.__name__,
+            ] + self.params
+        return self.pattern.format(
+            self.__class__.__name__,
             ', '.join(params)
         )
 
+    @classmethod
+    def format(cls, name: str, main: SQLObject):
+        return cls().__format(name, main)
+
     def __add(self, name: str, main: SQLObject):
         name = self.format(name, main)
-        self.class_type.add(name, main)
+        self.field_class.add(name, main)
         if self.extra:
             main.__call__(**self.extra)
 
     @classmethod
-    def get_instance(cls):
-        obj = Function.instance.get(cls.__name__)
-        if not obj:
-            obj = cls()
-        return obj
-
-    @classmethod
     def add(cls, name: str, main: SQLObject):
-        cls.get_instance().__add(name, main)
+        cls().__add(name, main)
 
 
 # ---- String Functions: ---------------------------------
