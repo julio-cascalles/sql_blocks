@@ -26,7 +26,8 @@ from tests.special_cases import (
     group_cypher, cypher_group, detected_parser_classes
 )
 from tests.functions import (
-    diff_over_sum, function_fields
+    diff_over_sum, function_fields,
+    DateDiff_function_variants
 )
 
 _best_movies = best_movies()
@@ -190,3 +191,13 @@ def test_function_fields():
         'Count(c.customer_id) as customer_count'
     ]
     assert function_fields() == expected
+
+def test_dialects():
+    expected = {
+        "ANSI": "Current_Date() - due_date",
+        "SQL_SERVER": "DateDiff(getDate(), due_date)",
+        "ORACLE": "SYSDATE - due_date",
+        "POSTGRESQL": "Current_date - due_date",
+        "MYSQL": "Current_Date() - due_date"
+    }
+    assert DateDiff_function_variants() == expected

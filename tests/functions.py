@@ -24,3 +24,15 @@ def function_fields() -> list:
         ]
     )
     return query.values[SELECT]
+
+
+def DateDiff_function_variants() -> dict:
+    result = {}
+    for dialect in Dialect:
+        Function.dialect = dialect
+        func = DateDiff(
+            Current_Date(),
+            'due_date'
+        )
+        result[dialect.name] = str(func)
+    return result

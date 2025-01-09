@@ -26,7 +26,7 @@ TO_LIST = lambda x: x if isinstance(x, list) else [x]
 
 
 class SQLObject:
-    ALIAS_FUNC = lambda t: t.lower()[:3]
+    ALIAS_FUNC = None
     """    ^^^^^^^^^^^^^^^^^^^^^^^^
     You can change the behavior by assigning 
     a user function to SQLObject.ALIAS_FUNC
@@ -41,7 +41,10 @@ class SQLObject:
     def set_table(self, table_name: str):
         if not table_name:
             return
-        if ' ' in table_name.strip():
+        cls = SQLObject
+        if cls.ALIAS_FUNC:
+            self.__alias = cls.ALIAS_FUNC(table_name)
+        elif ' ' in table_name.strip():
             table_name, self.__alias = table_name.split()
         elif '_' in table_name:
             self.__alias = ''.join(
@@ -49,7 +52,7 @@ class SQLObject:
                 for word in table_name.split('_')
             )
         else:
-            self.__alias = SQLObject.ALIAS_FUNC(table_name)
+            self.__alias = table_name.lower()[:3]
         self.values.setdefault(FROM, []).append(f'{table_name} {self.alias}')
 
     @property
@@ -111,15 +114,26 @@ class SQLObject:
             self.values[key] = result
 
 
+SQL_CONST_SYSDATE = 'SYSDATE'
+SQL_CONST_CURR_DATE = 'Current_date'
+SQL_CONSTS = [SQL_CONST_SYSDATE, SQL_CONST_CURR_DATE]
+
+
 class Field:
     prefix = ''
 
     @classmethod
     def format(cls, name: str, main: SQLObject) -> str:
+        def is_const() -> bool:
+            return any([
+                re.findall('[.()0-9]', name),
+                name in SQL_CONSTS,
+                re.findall(r'\w+\s*[+-]\s*\w+', name)
+            ])
         name = name.strip()
         if name in ('_', '*'):
             name = '*'
-        elif not re.findall('[.()0-9]', name):
+        elif not is_const():
             name = f'{main.alias}.{name}'
         if Function in cls.__bases__:
             name = f'{cls.__name__}({name})'
@@ -150,7 +164,16 @@ class NamedField:
         )
 
 
+class Dialect(Enum):
+    ANSI = 0
+    SQL_SERVER = 1
+    ORACLE = 2
+    POSTGRESQL = 3
+    MYSQL = 4
+
 class Function:
+    dialect = Dialect.ANSI
+
     def __init__(self, *params: list):
         # --- Replace class methods by instance methods: ------
         self.add = self.__add
@@ -158,26 +181,30 @@ class Function:
         # -----------------------------------------------------
         self.params = [str(p) for p in params]
         self.field_class = Field
-        self.pattern = '{}({})'
+        self.pattern = self.get_pattern()
         self.extra = {}
     
+    def get_pattern(self) -> str:
+        return '{func_name}({params})'
+
     def As(self, field_alias: str, modifiers=None):
         if modifiers:
             self.extra[field_alias] = TO_LIST(modifiers)
         self.field_class = NamedField(field_alias)
         return self
 
+    def __str__(self) -> str:
+        return self.pattern.format(
+            func_name=self.__class__.__name__,
+            params=', '.join(self.params)
+        )
+
     def __format(self, name: str, main: SQLObject) -> str:
-        if name in '*_' and self.params:
-            params = self.params
-        else:
-            params = [
+        if name not in '*_':
+            self.params = [
                 Field.format(name, main)
             ] + self.params
-        return self.pattern.format(
-            self.__class__.__name__,
-            ', '.join(params)
-        )
+        return str(self)
 
     @classmethod
     def format(cls, name: str, main: SQLObject):
@@ -196,7 +223,10 @@ class Function:
 
 # ---- String Functions: ---------------------------------
 class SubString(Function):
-    ...
+    def get_pattern(self) -> str:
+        if self.dialect in (Dialect.ORACLE, Dialect.MYSQL):
+            return 'Substr({params})'
+        return super().get_pattern()
 
 # ---- Numeric Functions: --------------------------------
 class Round(Function):
@@ -204,13 +234,37 @@ class Round(Function):
 
 # --- Date Functions: ------------------------------------
 class DateDiff(Function):
-    ...
-class Extract(Function):
-    ...
-class DatePart(Function):
-    ...
+    def get_pattern(self) -> str:
+        def is_field_or_func(name: str) -> bool:
+            return re.sub('[()]', '', name).isidentifier()
+        if self.dialect != Dialect.SQL_SERVER:
+            return ' - '.join(
+                p if is_field_or_func(p) else f"'{p}'"
+                for p in self.params
+            )  # <====  Date subtract
+        return super().get_pattern()
+
+class Year(Function):
+    def get_pattern(self) -> str:
+        database_type = {
+            Dialect.ORACLE: 'Extract(YEAR FROM {params})',
+            Dialect.POSTGRESQL: "Date_Part('year', {params})",
+        }
+        if self.dialect in database_type:
+            return database_type[self.dialect]
+        return super().get_pattern()
+
 class Current_Date(Function):
-    ...
+    def get_pattern(self) -> str:
+        database_type = {
+            Dialect.ORACLE: SQL_CONST_SYSDATE,
+            Dialect.POSTGRESQL: SQL_CONST_CURR_DATE,
+            Dialect.SQL_SERVER: 'getDate()'
+        }
+        if self.dialect in database_type:
+            return database_type[self.dialect]
+        return super().get_pattern()
+# --------------------------------------------------------
 
 class Aggregate:
     break_lines: bool = True
@@ -225,7 +279,7 @@ class Aggregate:
         )
         if keywords and self.break_lines:
             keywords += '\n\t'
-        self.pattern = '{}({})' + f' OVER({keywords})'
+        self.pattern = self.get_pattern() + f' OVER({keywords})'
         return self
 
 
@@ -324,6 +378,13 @@ def quoted(value) -> str:
     return str(value)
 
 
+class Position(Enum):
+    Middle = "LIKE '%{}%'"
+    StartWith = "LIKE '{}%'"
+    EndsWith = "LIKE '%{}'"
+    RegEx = "REGEXP_LIKE('{}')"
+
+
 class Where:
     prefix = ''
 
@@ -339,8 +400,8 @@ class Where:
         return cls.__constructor('=', value)
 
     @classmethod
-    def contains(cls, value: str):
-        return cls(f"LIKE '%{value}%'")
+    def contains(cls, content: str, pos: Position = Position.Middle):
+        return cls(pos.value.format(content))
    
     @classmethod
     def gt(cls, value):
@@ -1354,12 +1415,3 @@ def detect(text: str) -> Select:
     for query in query_list[1:]:
         result += query
     return result
-
-if __name__ == "__main__":
-    OrderBy.sort = SortType.DESC
-    query = Select(
-        'order_Detail d',
-        customer_id=GroupBy,
-        _=Sum('d.unitPrice * d.quantity').As('total', OrderBy)
-    )
-    print(query)

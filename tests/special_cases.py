@@ -58,7 +58,7 @@ def compare_individual_fields() -> bool:
 def added_object_changes() -> set:
     SQLObject.ALIAS_FUNC = lambda t: t[0]
     _class = Select(
-        'class c',
+        'class',
         student_id=ForeignKey('student'),
         teacher_id=ForeignKey('teacher')
     )
@@ -66,6 +66,7 @@ def added_object_changes() -> set:
     teacher = Select(teacher=Table('teacher_name, course'), id=PrimaryKey)
     s1 = set( (student + (_class + teacher)).values[FROM] )
     s2 = set( _class.values[FROM] )
+    SQLObject.ALIAS_FUNC = None
     return s1.intersection(s2)
 
 def query_for_cypher() -> Select:
@@ -123,7 +124,6 @@ NEO4J_SCRIPT = NEO4J_FORMAT.format(
 )
 
 def cypher_query() -> Select:
-    SQLObject.ALIAS_FUNC = lambda t: t[0].lower()
     ForeignKey.references = {}
     student, _class, teacher = Select.parse(CYPHER_SCRIPT, CypherParser)
     return student + _class + teacher
