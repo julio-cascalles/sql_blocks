@@ -379,10 +379,9 @@ def quoted(value) -> str:
 
 
 class Position(Enum):
-    Middle = "LIKE '%{}%'"
-    StartWith = "LIKE '{}%'"
-    EndsWith = "LIKE '%{}'"
-    RegEx = "REGEXP_LIKE('{}')"
+    Middle = 0
+    StartsWith = 1
+    EndsWith = 2
 
 
 class Where:
@@ -401,7 +400,13 @@ class Where:
 
     @classmethod
     def contains(cls, content: str, pos: Position = Position.Middle):
-        return cls(pos.value.format(content))
+        return cls(
+            "LIKE '{}{}{}'".format(
+                '%' if pos != Position.StartsWith else '',
+                content,
+                '%' if pos != Position.EndsWith else ''
+            )
+        )
    
     @classmethod
     def gt(cls, value):
@@ -481,9 +486,8 @@ class Options:
         self.__children: dict = values
 
     def add(self, logical_separator: str, main: SQLObject):
-        """
-        `logical_separator` must be AND or OR
-        """
+        if logical_separator not in ('AND', 'OR'):
+            raise ValueError('`logical_separator` must be AND or OR')
         conditions: list[str] = []
         child: Where
         for field, child in self.__children.items():
@@ -1381,6 +1385,31 @@ class RuleDateFuncReplace(Rule):
             target.values[WHERE][i] = ' AND '.join(temp.values[WHERE])
 
 
+class RuleReplaceJoinBySubselect(Rule):
+    @classmethod
+    def apply(cls, target: Select):
+        main, *others = Select.parse( str(target) )
+        modified = False
+        for query in others:
+            fk_field, primary_k = ForeignKey.find(main, query)
+            more_relations = any([
+                ref[0] == query.table_name for ref in ForeignKey.references
+            ])
+            invalid = any([
+                len( query.values.get(SELECT, []) ) > 0,
+                len( query.values.get(WHERE, []) ) == 0,
+                not fk_field, more_relations
+            ])
+            if invalid:
+                continue
+            query.__class__ = SubSelect
+            Field.add(primary_k, query)
+            query.add(fk_field, main)
+            modified = True
+        if modified:
+            target.values = main.values.copy()
+
+
 def parser_class(text: str) -> Parser:
     PARSER_REGEX = [
         (r'select.*from', SQLParser),
@@ -1415,3 +1444,16 @@ def detect(text: str) -> Select:
     for query in query_list[1:]:
         result += query
     return result
+
+
+if __name__ == "__main__":
+    query = Select(
+        'Installments i', due_date=Field,  customer=Select(
+            'Customer c', id=PrimaryKey,
+            name=contains('Smith', Position.EndsWith)
+        )
+    )
+    print(query)
+    print('-----')
+    query.optimize([RuleReplaceJoinBySubselect])
+    print(query)

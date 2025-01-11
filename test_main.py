@@ -12,7 +12,8 @@ from tests.rules import (
     optimized_logical_op,
     optimized_limit,
     optimized_date_func,
-    all_optimizations
+    all_optimizations, 
+    replace_join_by_subselect
 )
 from tests.special_cases import (
     error_inverted_condition, named_fields_in_nested_query,
@@ -201,3 +202,7 @@ def test_dialects():
         "MYSQL": "Current_Date() - due_date"
     }
     assert DateDiff_function_variants() == expected
+
+def test_rule_replace_join_by_subselect():
+    expected = ["i.customer IN (SELECT c.id FROM Customer c WHERE c.name LIKE 'Albert E%')"]
+    assert replace_join_by_subselect() == expected

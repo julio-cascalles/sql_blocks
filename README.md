@@ -82,8 +82,13 @@ query = Select('Movie m', title=Field,
         genre=eq("Sci-Fi"),
         awards=contains("Oscar")
     )
+    AND=Options(
+        ..., name=contains(
+            'Chris',
+            Position.StartsWith
+        )
+    )
 ```
-> Could be AND=Options(...)
 
 3.4 -- Negative conditions use the _Not_ class instead of _Where_
 ```
@@ -348,6 +353,35 @@ m2 = Select(
 
 > The method allows you to select which rules you want to apply in the optimization...Or define your own rules!
 
+>> NOTE: When a joined table is used only as a filter, it is possible that it can be changed to a sub-query:
+
+    query = Select(
+        'Installments i', due_date=Field,  customer=Select(
+            'Customer c', id=PrimaryKey,
+            name=contains('Smith', Position.EndsWith)
+        )
+    )
+    print(query)
+    print('-----')
+    query.optimize([RuleReplaceJoinBySubselect])
+    print(query)
+```
+SELECT
+        i.due_date
+FROM
+        Installments i
+        JOIN Customer c ON (i.customer = c.id)
+WHERE
+        c.name LIKE '%Smith'
+-----
+SELECT
+        i.due_date
+FROM
+        Installments i
+WHERE
+        i.customer IN (SELECT c.id FROM Customer c WHERE c.name LIKE '%Smith')
+```
+
 ---
 
 ### 12 - Adding multiple fields at once
@@ -552,3 +586,21 @@ GROUP BY
 ORDER BY
         customer_count
 ```
+---
+### 16 - Function classes
+You may use this functions:
+* SubString
+* Round
+* DateDiff
+* Year
+* Current_Date
+* Avg
+* Min
+* Max
+* Sum
+* Count
+> Some of these functions may vary in syntax depending on the database.
+For example, if your query is going to run on Oracle, do the following:
+
+`Function.dialect = Dialect.ORACLE`
+

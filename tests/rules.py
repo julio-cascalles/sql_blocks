@@ -53,6 +53,7 @@ def optimized_date_func() -> bool:
     return p1 == p2
 
 def all_optimizations() -> bool:
+    # ... Except `RuleReplaceJoinBySubselect`
     p1 = Select.parse("""
         SELECT * FROM Product p
         WHERE (p.category = 'Gizmo'
@@ -75,3 +76,14 @@ def all_optimizations() -> bool:
     )[0]
     p1.optimize()
     return p1 == p2
+
+
+def replace_join_by_subselect() -> list:
+    query = Select(
+        'Installments i', due_date=Field,  customer=Select(
+            'Customer c', id=PrimaryKey,
+            name=contains('Albert E', Position.StartsWith)
+        )
+    )
+    query.optimize([RuleReplaceJoinBySubselect])
+    return query.values.get(WHERE, [])
