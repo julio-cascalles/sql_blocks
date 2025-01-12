@@ -266,22 +266,37 @@ class Current_Date(Function):
         return super().get_pattern()
 # --------------------------------------------------------
 
-class Aggregate:
+class Frame:
     break_lines: bool = True
 
     def over(self, **args):
-        keywords = ' '.join(
-            '{}{} BY {}'.format(
-                '\n\t\t' if self.break_lines else '',
-                key.upper(), args[key]
-            ) for key in ('partition', 'order')
-            if key in args
-        )
+        """
+        How to use:
+            over(field1=OrderBy, field2=Partition)
+        """
+        keywords = ''
+        for field, obj in args.items():
+            is_valid = any([
+                obj is class_type # or isinstance(obj, class_type)
+                for class_type in (OrderBy, Partition)
+            ])
+            if not is_valid:
+                continue
+            keywords += '{}{} {}'.format(
+                '\n\t\t' if self.break_lines else ' ',
+                obj.cls_to_str(), field
+            )
         if keywords and self.break_lines:
             keywords += '\n\t'
         self.pattern = self.get_pattern() + f' OVER({keywords})'
         return self
 
+
+class Aggregate(Frame):
+    ...
+
+class Window(Frame):
+    ...
 
 # ---- Aggregate Functions: -------------------------------
 class Avg(Aggregate, Function):
@@ -294,6 +309,17 @@ class Sum(Aggregate, Function):
     ...
 class Count(Aggregate, Function):
     ...
+
+# ---- Window Functions: -----------------------------------
+class Row_Number(Window, Function):
+    ... 
+class Rank(Window, Function):
+    ... 
+class Lag(Window, Function):
+    ...
+class Lead(Window, Function):
+    ...
+
 
 # ---- Conversions and other Functions: ---------------------
 class Coalesce(Function):
@@ -538,6 +564,16 @@ class OrderBy(Clause):
     def add(cls, name: str, main: SQLObject):
         name = cls.format(name, main)
         main.values.setdefault(ORDER_BY, []).append(name+cls.sort.value)
+
+    @classmethod
+    def cls_to_str(cls) -> str:
+        return ORDER_BY
+
+PARTITION_BY = 'PARTITION BY'
+class Partition:
+    @classmethod
+    def cls_to_str(cls) -> str:
+        return PARTITION_BY
 
 
 class GroupBy(Clause):
@@ -1446,14 +1482,3 @@ def detect(text: str) -> Select:
     return result
 
 
-if __name__ == "__main__":
-    query = Select(
-        'Installments i', due_date=Field,  customer=Select(
-            'Customer c', id=PrimaryKey,
-            name=contains('Smith', Position.EndsWith)
-        )
-    )
-    print(query)
-    print('-----')
-    query.optimize([RuleReplaceJoinBySubselect])
-    print(query)

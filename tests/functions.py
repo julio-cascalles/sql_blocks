@@ -6,7 +6,7 @@ def diff_over_sum() -> set:
     query=Select(
         'Enrollment e',
         payment=Sum().over(
-            partition='student_id', order='due_date'
+            student_id=Partition, due_date=OrderBy
         ).As('sum_per_student')
     )
     return query.diff(SELECT, ['OVER('], True)

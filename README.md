@@ -599,6 +599,12 @@ You may use this functions:
 * Max
 * Sum
 * Count
+* Lag
+* Lead
+* Row_Number
+* Rank
+* Coalesce
+* Cast
 > Some of these functions may vary in syntax depending on the database.
 For example, if your query is going to run on Oracle, do the following:
 
