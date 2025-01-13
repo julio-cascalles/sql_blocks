@@ -539,12 +539,18 @@ It consists of the inverse process of parsing: From a Select object, it returns 
 ---
 ### 14 - Window Function
 
-Aggregation functions (Avg, Min, Max, Sum, Count) have the **over** method...
+Aggregation functions (Avg, Min, Max, Sum, Count) -- or Window functions (Lead, Lag, Row_Number, Rank) -- have the **over** method...
 
     query=Select(
         'Enrollment e',
         payment=Sum().over(
-            partition='student_id', order='due_date'
+            student_id=Partition, due_date=OrderBy,
+            # _=Rows(Current(), Following(5)), 
+               # ^^^-------> ROWS BETWEEN CURRENT ROW AND 5 FOLLOWING
+            # _=Rows(Preceding(3), Following()),
+               # ^^^-------> ROWS BETWEEN 3 PRECEDING AND UNBOUNDED FOLLOWING
+            # _=Rows(Preceding(3)) 
+               # ^^^-------> ROWS 3 PRECEDING
         ).As('sum_per_student')
     )
 

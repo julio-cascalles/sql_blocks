@@ -282,14 +282,15 @@ class Frame:
         keywords = ''
         for field, obj in args.items():
             is_valid = any([
-                obj is class_type # or isinstance(obj, class_type)
-                for class_type in (OrderBy, Partition)
+                obj is OrderBy,
+                obj is Partition,
+                isinstance(obj, Rows),
             ])
             if not is_valid:
                 continue
             keywords += '{}{} {}'.format(
                 '\n\t\t' if self.break_lines else ' ',
-                obj.cls_to_str(), field
+                obj.cls_to_str(), field if field != '_' else ''
             )
         if keywords and self.break_lines:
             keywords += '\n\t'
@@ -560,6 +561,34 @@ class Clause:
 class SortType(Enum):
     ASC = ''
     DESC = ' DESC'
+
+class Row:
+    def __init__(self, value: int=0):
+        self.value = value
+
+    def __str__(self) -> str:
+        return '{} {}'.format(
+            'UNBOUNDED' if self.value == 0 else self.value,
+            self.__class__.__name__.upper()
+        )
+
+class Preceding(Row):
+    ...
+class Following(Row):
+    ...
+class Current(Row):
+    def __str__(self) -> str:
+        return 'CURRENT ROW'
+
+class Rows:
+    def __init__(self, *rows: list[Row]):
+        self.rows = rows
+
+    def cls_to_str(self) -> str:
+        return 'ROWS {}{}'.format(
+            'BETWEEN ' if len(self.rows) > 1 else '',
+            ' AND '.join(str(row) for row in self.rows)
+        )
 
 
 class OrderBy(Clause):
@@ -1475,7 +1504,7 @@ def parser_class(text: str) -> Parser:
     return None
 
 
-def detect(text: str) -> Select:    
+def detect(text: str, join_queries: bool = True) -> Select:
     from collections import Counter
     parser = parser_class(text)
     if not parser:
@@ -1491,22 +1520,9 @@ def detect(text: str) -> Select:
                 text = text[:begin] + new_name + '(' + text[end:]
                 count -= 1
     query_list = Select.parse(text, parser)
+    if not join_queries:
+        return query_list
     result = query_list[0]
     for query in query_list[1:]:
         result += query
     return result
-
-
-if __name__ == '__main__':
-    p, c, a = Select.parse('''
-    Professor(?nome="Júlio Cascalles", id)
-    <- Curso@disciplina(professor, aluno) ->
-    Aluno(id ^count$qtd_alunos)
-    ''', CypherParser)
-    query = p + c + a
-    print('#######################################')
-    print(query)
-    print('***************************************')
-    query.optimize([RuleReplaceJoinBySubselect])
-    print(query)
-    print('#######################################')
