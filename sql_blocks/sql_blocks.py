@@ -70,6 +70,10 @@ class SQLObject:
         appendix = {WHERE: r'\s+and\s+|', FROM: r'\s+join\s+|\s+JOIN\s+'}
         return KEYWORD[key][0].format(appendix.get(key, ''))
 
+    @staticmethod
+    def is_named_field(fld: str, key: str) -> bool:
+        return key == SELECT and re.search(r'\s+as\s+|\s+AS\s+', fld)
+
     def diff(self, key: str, search_list: list, exact: bool=False) -> set:
         def disassemble(source: list) -> list:
             if not exact:
@@ -82,12 +86,10 @@ class SQLObject:
             if exact:
                 fld = fld.lower()
             return fld.strip()
-        def is_named_field(fld: str) -> bool:
-            return key == SELECT and re.search(r'\s+as\s+|\s+AS\s+', fld)
         def field_set(source: list) -> set:
             return set(
                 (
-                    fld if is_named_field(fld) else
+                    fld if self.is_named_field(fld, key) else
                     re.sub(pattern, '', cleanup(fld))
                 )
                 for string in disassemble(source)
@@ -105,13 +107,16 @@ class SQLObject:
             return s1.symmetric_difference(s2)
         return s1 - s2
 
-    def delete(self, search: str, keys: list=USUAL_KEYS):
+    def delete(self, search: str, keys: list=USUAL_KEYS, exact: bool=False):
+        if exact:
+            not_match = lambda item: not re.search(fr'\w*[.]*{search}$', item)
+        else:
+            not_match = lambda item: search not in item
         for key in keys:
-            result = []
-            for item in self.values.get(key, []):
-                if search not in item:
-                    result.append(item)
-            self.values[key] = result
+            self.values[key] = [
+                item for item in self.values.get(key, [])
+                if not_match(item)
+            ]
 
 
 SQL_CONST_SYSDATE = 'SYSDATE'
@@ -961,7 +966,7 @@ class SQLParser(Parser):
                     obj.values[key] = [
                         Field.format(fld, obj)
                         for fld in re.split(separator, values[key])
-                        if (fld != '*' and len(tables) == 1) or obj.match(fld)
+                        if (fld != '*' and len(tables) == 1) or obj.match(fld, key)
                     ]
                 result[obj.alias] = obj
         self.queries = list( result.values() )
@@ -1026,8 +1031,9 @@ class CypherParser(Parser):
             if func_name == 'count':
                 if not token:
                     token = 'count_1'
-                NamedField(token, Count).add('*', self.queries[-1])
-                class_list = []
+                pk_field = self.queries[-1].key_field or 'id'
+                Count().As(token, extra_classes).add(pk_field, self.queries[-1])
+                return
             else:
                 FUNCTION_CLASS = {f.__name__.lower(): f for f in Function.__subclasses__()}
                 class_list = [ FUNCTION_CLASS[func_name] ]
@@ -1048,7 +1054,7 @@ class CypherParser(Parser):
             if not last.values.get(SELECT):
                 raise IndexError(f'Primary Key not found for {last.table_name}.')
             pk_field = last.values[SELECT][-1].split('.')[-1]
-            last.delete(pk_field, [SELECT])
+            last.delete(pk_field, [SELECT], exact=True)
         if '{}' in token:
             foreign_fld = token.format(
                 last.table_name.lower()
@@ -1063,12 +1069,11 @@ class CypherParser(Parser):
                 if fld not in curr.values.get(GROUP_BY, [])
             ]
             foreign_fld = fields[0].split('.')[-1]
-            curr.delete(foreign_fld, [SELECT])
+            curr.delete(foreign_fld, [SELECT], exact=True)
             if curr.join_type == JoinType.RIGHT:
                 pk_field, foreign_fld = foreign_fld, pk_field
         if curr.join_type == JoinType.RIGHT:
             curr, last = last, curr
-            # pk_field, foreign_fld = foreign_fld, pk_field
         k = ForeignKey.get_key(curr, last)
         ForeignKey.references[k] = (foreign_fld, pk_field)
 
@@ -1309,8 +1314,17 @@ class Select(SQLObject):
         self.values.setdefault(LIMIT, result)
         return self
 
-    def match(self, expr: str) -> bool:
-        return re.findall(f'\b*{self.alias}[.]', expr) != []
+    def match(self, field: str, key: str) -> bool:
+        '''
+        Recognizes if the field is from the current table
+        '''
+        if key in (ORDER_BY, GROUP_BY) and '.' not in field:
+            return any(
+                self.is_named_field(fld, SELECT)
+                for fld in self.values[SELECT]
+                if field in fld
+            )
+        return re.findall(f'\b*{self.alias}[.]', field) != []
 
     @classmethod
     def parse(cls, txt: str, parser: Parser = SQLParser) -> list[SQLObject]:
@@ -1431,12 +1445,13 @@ class RuleReplaceJoinBySubselect(Rule):
             more_relations = any([
                 ref[0] == query.table_name for ref in ForeignKey.references
             ])
-            invalid = any([
+            keep_join = any([
                 len( query.values.get(SELECT, []) ) > 0,
                 len( query.values.get(WHERE, []) ) == 0,
                 not fk_field, more_relations
             ])
-            if invalid:
+            if keep_join:
+                query.add(fk_field, main)
                 continue
             query.__class__ = SubSelect
             Field.add(primary_k, query)
@@ -1482,3 +1497,16 @@ def detect(text: str) -> Select:
     return result
 
 
+if __name__ == '__main__':
+    p, c, a = Select.parse('''
+    Professor(?nome="Júlio Cascalles", id)
+    <- Curso@disciplina(professor, aluno) ->
+    Aluno(id ^count$qtd_alunos)
+    ''', CypherParser)
+    query = p + c + a
+    print('#######################################')
+    print(query)
+    print('***************************************')
+    query.optimize([RuleReplaceJoinBySubselect])
+    print(query)
+    print('#######################################')

@@ -193,7 +193,7 @@ def query_for_WHERE_neo4j():
 def group_cypher() -> Select:
     return Select(
         'People', age=Avg, gender=[GroupBy, Field],
-        _=NamedField('qtde', Count), region=eq('SOUTH'), qtde=OrderBy
+        id=Count().As('qtde', OrderBy), region=eq('SOUTH')
     )
 
 def cypher_group() -> Select:

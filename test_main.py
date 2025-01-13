@@ -172,7 +172,11 @@ def test_neo4J_with_WHERE():
 
 def test_group_cypher():
     q1 = group_cypher()
+    print('-*/-*/-*/-*/-*/-*/-*/-*/-*/-*/')
+    print(q1)
     q2 = cypher_group()
+    print('-*/-*/-*/-*/-*/-*/-*/-*/-*/-*/')
+    print(q2)
     assert q1 == q2
 
 def test_parser_classes():
