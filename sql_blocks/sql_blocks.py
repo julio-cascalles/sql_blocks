@@ -121,7 +121,8 @@ class SQLObject:
 
 SQL_CONST_SYSDATE = 'SYSDATE'
 SQL_CONST_CURR_DATE = 'Current_date'
-SQL_CONSTS = [SQL_CONST_SYSDATE, SQL_CONST_CURR_DATE]
+SQL_ROW_NUM = 'ROWNUM'
+SQL_CONSTS = [SQL_CONST_SYSDATE, SQL_CONST_CURR_DATE, SQL_ROW_NUM]
 
 
 class Field:
@@ -654,7 +655,7 @@ class Rule:
         ...
 
 class QueryLanguage:
-    pattern = '{select}{_from}{where}{group_by}{order_by}'
+    pattern = '{select}{_from}{where}{group_by}{order_by}{limit}'
     has_default = {key: bool(key == SELECT) for key in KEYWORD}
 
     @staticmethod
@@ -682,13 +683,16 @@ class QueryLanguage:
     def set_group(self, values: list) -> str:
         return  self.join_with_tabs(values, ',')
 
+    def set_limit(self, values: list) -> str:
+        return self.join_with_tabs(values, ' ')
+
     def __init__(self, target: 'Select'):
-        self.KEYWORDS = [SELECT, FROM, WHERE, GROUP_BY, ORDER_BY]
+        self.KEYWORDS = [SELECT, FROM, WHERE, GROUP_BY, ORDER_BY, LIMIT]
         self.TABULATION = '\n\t' if target.break_lines else ' '
         self.LINE_BREAK = '\n' if target.break_lines else ' '
         self.TOKEN_METHODS = {
             SELECT: self.add_field, FROM: self.get_tables, 
-            WHERE: self.extract_conditions,
+            WHERE: self.extract_conditions, LIMIT: self.set_limit,
             ORDER_BY: self.sort_by, GROUP_BY: self.set_group,
         }
         self.result = {}
@@ -1337,10 +1341,21 @@ class Select(SQLObject):
         return True
 
     def limit(self, row_count: int=100, offset: int=0):
-        result = [str(row_count)]
-        if offset > 0:
-            result.append(f'OFFSET {offset}')
-        self.values.setdefault(LIMIT, result)
+        if Function.dialect == Dialect.SQL_SERVER:
+            fields = self.values.get(SELECT)
+            if fields:
+                fields[0] = f'SELECT TOP({row_count}) {fields[0]}'
+            else:
+                self.values[SELECT] = [f'SELECT TOP({row_count}) *']
+            return self
+        if Function.dialect == Dialect.ORACLE:
+            Where.gte(row_count).add(SQL_ROW_NUM, self)
+            if offset > 0:
+                Where.lte(row_count+offset).add(SQL_ROW_NUM, self)
+            return self
+        self.values[LIMIT] = ['{}{}'.format(
+            row_count, f' OFFSET {offset}' if offset > 0 else ''
+        )]
         return self
 
     def match(self, field: str, key: str) -> bool:
@@ -1526,3 +1541,17 @@ def detect(text: str, join_queries: bool = True) -> Select:
     for query in query_list[1:]:
         result += query
     return result
+
+
+if __name__ == '__main__':
+    for dialect in Dialect:
+        Function.dialect = dialect
+        print(f'--------------{dialect.name}--------------')
+        query = Select(
+            'Installments',
+            _=DateDiff(
+                Current_Date(),
+                'due_date'
+            ).As('elapsed_time')
+        ).limit(10)
+        print(query)
