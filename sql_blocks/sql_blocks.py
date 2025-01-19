@@ -335,6 +335,9 @@ class Cast(Function):
     ...
 
 
+FUNCTION_CLASS = {f.__name__.lower(): f for f in Function.__subclasses__()}
+
+
 class ExpressionField:
     def __init__(self, expr: str):
         self.expr = expr
@@ -468,8 +471,13 @@ class Where:
         return cls(f'IN ({values})')
 
     def add(self, name: str, main: SQLObject):
+        func_type = FUNCTION_CLASS.get(name.lower())
+        if func_type:
+            name = func_type.format('*', main)
+        else:
+            name = Field.format(name, main)
         main.values.setdefault(WHERE, []).append('{}{} {}'.format(
-            self.prefix, Field.format(name, main), self.expr
+            self.prefix, name, self.expr
         ))
 
 
@@ -549,7 +557,6 @@ class Clause:
     def format(cls, name: str, main: SQLObject) -> str:
         def is_function() -> bool:
             diff = main.diff(SELECT, [name.lower()], True)
-            FUNCTION_CLASS = {f.__name__.lower(): f for f in Function.__subclasses__()}
             return diff.intersection(FUNCTION_CLASS)
         found = re.findall(r'^_\d', name)
         if found:
@@ -1068,7 +1075,6 @@ class CypherParser(Parser):
                 Count().As(token, extra_classes).add(pk_field, self.queries[-1])
                 return
             else:
-                FUNCTION_CLASS = {f.__name__.lower(): f for f in Function.__subclasses__()}
                 class_list = [ FUNCTION_CLASS[func_name] ]
         class_list += extra_classes
         FieldList(token, class_list).add('', self.queries[-1])
@@ -1544,14 +1550,10 @@ def detect(text: str, join_queries: bool = True) -> Select:
 
 
 if __name__ == '__main__':
-    for dialect in Dialect:
-        Function.dialect = dialect
-        print(f'--------------{dialect.name}--------------')
-        query = Select(
-            'Installments',
-            _=DateDiff(
-                Current_Date(),
-                'due_date'
-            ).As('elapsed_time')
-        ).limit(10)
-        print(query)
+    query = Select(
+        'Tips t',
+        tip=[Field, Lag().over(day=OrderBy).As('last')],
+        diff=ExpressionField('Round(tip-last, 2) as {f}'),
+        Row_Number=gt(1)
+    )
+    print(query)
