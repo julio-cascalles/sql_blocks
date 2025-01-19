@@ -472,9 +472,14 @@ class Where:
 
     def add(self, name: str, main: SQLObject):
         func_type = FUNCTION_CLASS.get(name.lower())
+        exists = any(
+            main.is_named_field(fld, SELECT)
+            for fld in main.values.get(SELECT, [])
+            if name in fld
+        )
         if func_type:
             name = func_type.format('*', main)
-        else:
+        elif not exists:
             name = Field.format(name, main)
         main.values.setdefault(WHERE, []).append('{}{} {}'.format(
             self.prefix, name, self.expr
@@ -1553,7 +1558,9 @@ if __name__ == '__main__':
     query = Select(
         'Tips t',
         tip=[Field, Lag().over(day=OrderBy).As('last')],
-        diff=ExpressionField('Round(tip-last, 2) as {f}'),
-        Row_Number=gt(1)
+        diff=[
+            ExpressionField('Round(tip-last, 2) as {f}'),
+            Not.is_null()
+        ]
     )
     print(query)
