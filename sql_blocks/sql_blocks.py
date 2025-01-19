@@ -566,7 +566,7 @@ class Clause:
         found = re.findall(r'^_\d', name)
         if found:
             name = found[0].replace('_', '')
-        elif main.alias and not is_function():
+        elif '.' not in name and main.alias and not is_function():
             name = f'{main.alias}.{name}'
         return name
 
@@ -1008,8 +1008,11 @@ class SQLParser(Parser):
                     if not key in values:
                         continue
                     separator = self.class_type.get_separator(key)
+                    cls = {
+                        ORDER_BY: OrderBy, GROUP_BY: GroupBy
+                    }.get(key, Field)
                     obj.values[key] = [
-                        Field.format(fld, obj)
+                        cls.format(fld, obj)
                         for fld in re.split(separator, values[key])
                         if (fld != '*' and len(tables) == 1) or obj.match(fld, key)
                     ]
@@ -1555,12 +1558,22 @@ def detect(text: str, join_queries: bool = True) -> Select:
 
 
 if __name__ == '__main__':
-    query = Select(
-        'Tips t',
-        tip=[Field, Lag().over(day=OrderBy).As('last')],
-        diff=[
-            ExpressionField('Round(tip-last, 2) as {f}'),
-            Not.is_null()
-        ]
-    )
+    # query = Select(
+    #     'Tips t',
+    #     tip=[Field, Lag().over(day=OrderBy).As('last')],
+    #     diff=[
+    #         ExpressionField('Round(tip-last, 2) as {f}'),
+    #         Not.is_null()
+    #     ]
+    # )
+    p, c, a = Select.parse('''
+    Professor(?nome="Júlio Cascalles", id)
+    <- Curso@disciplina(professor, aluno) ->
+    Aluno(id ^count$qtd_alunos)
+    ''', CypherParser)
+    query = p + c + a
+    print(query)
+    print('------------------')
+    query.optimize([RuleReplaceJoinBySubselect])
+    # ==============================================
     print(query)
