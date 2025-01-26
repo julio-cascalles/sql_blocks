@@ -30,6 +30,10 @@ from tests.functions import (
     diff_over_sum, function_fields,
     DateDiff_function_variants
 )
+from tests.cte import(
+    recursive_obj, compare_recursive_text
+)
+
 
 _best_movies = best_movies()
 query = {}
@@ -210,3 +214,7 @@ def test_dialects():
 def test_rule_replace_join_by_subselect():
     expected = ["i.customer IN (SELECT c.id FROM Customer c WHERE c.name LIKE 'Albert E%')"]
     assert replace_join_by_subselect() == expected
+
+def test_cte():
+    r = recursive_obj()
+    assert compare_recursive_text(r)

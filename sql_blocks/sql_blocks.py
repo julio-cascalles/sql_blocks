@@ -470,7 +470,17 @@ class Where:
             values = ','.join(quoted(v) for v in values)
         return cls(f'IN ({values})')
 
+    @classmethod
+    def formula(cls, formula: str):
+        return cls( ExpressionField(formula) )
+
     def add(self, name: str, main: SQLObject):
+        if isinstance(self.expr, ExpressionField):
+            self.expr = self.expr.format(name, main)
+            main.values.setdefault(WHERE, []).append('{} {}'.format(
+                self.prefix, self.expr
+            ))
+            return
         func_type = FUNCTION_CLASS.get(name.lower())
         exists = any(
             main.is_named_field(fld, SELECT)
@@ -1419,6 +1429,47 @@ class NotSelectIN(SelectIN):
     condition_class = Not
 
 
+class CTE:
+    prefix = ''
+
+    def __init__(self, name: str, query_list: list[Select]):
+        self.name = name
+        for query in query_list:
+            query.break_lines = False
+        self.query_list = query_list
+
+    def format(self, query: Select) -> str:
+        LINE_MAX_SIZE = 50
+        result, line = [], ''
+        for word in str(query).split(' '):
+            if len(line) >= LINE_MAX_SIZE and word in KEYWORD:
+                result.append(line)
+                line = ''
+            line += word + ' '
+        if line:
+            result.append(line)
+        return '\n\t'.join(result)
+
+    def __str__(self) -> str:
+        return 'WITH {}{} AS (\n\t{}\n)SELECT * FROM {}'.format(
+            self.prefix, self.name, 
+            '\nUNION ALL\n\t'.join(
+                self.format(q) for q in self.query_list
+            ), self.name
+        )
+
+class Recursive(CTE):
+    prefix = 'RECURSIVE '
+
+    def __str__(self) -> str:
+        if len(self.query_list) > 1:
+            alias = self.name[0].lower()
+            self.query_list[-1].values[FROM].append(f', {self.name} {alias}')
+        return super().__str__()
+
+
+# ----- Rules -----
+
 class RulePutLimit(Rule):
     @classmethod
     def apply(cls, target: Select):
@@ -1556,24 +1607,3 @@ def detect(text: str, join_queries: bool = True) -> Select:
         result += query
     return result
 
-
-if __name__ == '__main__':
-    # query = Select(
-    #     'Tips t',
-    #     tip=[Field, Lag().over(day=OrderBy).As('last')],
-    #     diff=[
-    #         ExpressionField('Round(tip-last, 2) as {f}'),
-    #         Not.is_null()
-    #     ]
-    # )
-    p, c, a = Select.parse('''
-    Professor(?nome="Júlio Cascalles", id)
-    <- Curso@disciplina(professor, aluno) ->
-    Aluno(id ^count$qtd_alunos)
-    ''', CypherParser)
-    query = p + c + a
-    print(query)
-    print('------------------')
-    query.optimize([RuleReplaceJoinBySubselect])
-    # ==============================================
-    print(query)
