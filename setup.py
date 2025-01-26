@@ -3,7 +3,7 @@ from setuptools import setup
 
 setup(
     name = 'sql_blocks',
-    version = '1.25.26011836',
+    version = '1.25.26011923',
     author = 'Júlio Cascalles',
     author_email = 'julio.cascalles@outlook.com',
     packages = ['sql_blocks'],

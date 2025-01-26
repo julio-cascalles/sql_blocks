@@ -100,6 +100,16 @@ based_on_book=Not.is_null()
 hash_tag=inside(['space', 'monster', 'gore'])
 ```
 
+3.6 -- Combining ExpressionField with Where condition:
+* The **formula** method allows you to write an expression as a condition:
+```
+query=Select(
+    'Folks f2',
+    id=Where.formula('({af} = a.father OR {af} = a.mother)')
+)
+```
+> Results: `WHERE...f2.id = a.father OR f2.id = a.mother`
+
 ---
 ### 4 - A field can be two things at the same time:
 
@@ -616,3 +626,39 @@ For example, if your query is going to run on Oracle, do the following:
 
 `Function.dialect = Dialect.ORACLE`
 
+---
+
+### 17 - CTE and Recursive classes
+
+* **_CTE class_**
+```
+    query = Select(
+        'SocialMedia s', post=Count, reaction=Sum, user=GroupBy
+    )
+    print( CTE('Metrics', [query]) )
+```
+The result is...
+```
+    WITH Metrics AS (
+            SELECT Count(s.post), Sum(s.reaction) FROM SocialMedia s GROUP BY user
+    )SELECT * FROM Metrics
+```
+
+* **_Recursive class_**
+```
+q1 = Select(
+    'SocialMedia me', name=[ eq(MY_NAME), Field ]
+)
+q2 = Select(
+    'SocialMedia you' name=Field, id=Where.formula('{af} = n.friend')
+)
+print( Recursive('Network', [q1, q2]) )
+```
+The result is...
+```
+WITH RECURSIVE Network AS (
+        SELECT me.name FROM SocialMedia me WHERE me.name = 'Júlio Cascalles'
+UNION ALL
+        SELECT you.name FROM SocialMedia you , Network n WHERE  you.id = n.friend
+)SELECT * FROM Network
+```

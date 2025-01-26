@@ -1607,3 +1607,15 @@ def detect(text: str, join_queries: bool = True) -> Select:
         result += query
     return result
 
+
+if __name__ == "__main__":
+    MY_NAME = 'Júlio Cascalles'
+    # query = Select('SocialMedia s', post=Count, reaction=Sum, user=GroupBy)
+    # print( CTE('Metrics', [query]) )
+    q1 = Select(
+        'SocialMedia me', name=[ eq(MY_NAME), Field ]
+    )
+    q2 = Select(
+        'SocialMedia you', name=Field, id=Where.formula('{af} = n.friend')
+    )
+    print( Recursive('Network', [q1, q2]) )
