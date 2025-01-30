@@ -24,7 +24,8 @@ from tests.special_cases import (
     neo4j_queries, query_for_neo4J, neo4j_joined_query,
     script_from_neo4j_query, script_mongo_from,
     neo4j_with_WHERE, query_for_WHERE_neo4j, 
-    group_cypher, cypher_group, detected_parser_classes
+    group_cypher, cypher_group, detected_parser_classes,
+    compare_join_condition, tables_without_JOIN
 )
 from tests.functions import (
     diff_over_sum, function_fields,
@@ -218,3 +219,7 @@ def test_rule_replace_join_by_subselect():
 def test_cte():
     r = recursive_obj()
     assert compare_recursive_text(r)
+
+def test_multiple_tables_without_JOIN():
+    twj = tables_without_JOIN()
+    assert compare_join_condition(twj)

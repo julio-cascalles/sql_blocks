@@ -1,4 +1,5 @@
 import re
+from difflib import SequenceMatcher
 from sql_blocks.sql_blocks import *
 
 VOICE_TYPE_FIELD = 'voice_type'
@@ -211,3 +212,31 @@ def detected_parser_classes() -> bool:
         if pc != class_type:
             return False
     return True
+
+def compare_join_condition(obj: Select) -> bool:
+    txt1 = re.sub(r'\s+', ' ', str(obj) ).lower()
+    txt2 = re.sub(r'\s+', ' ', """
+        SELECT
+                album.name as album_name,
+                singer.name as artist_name,
+                album.year_recorded
+        FROM
+                'sql_blocks/music/data/Album.csv' album
+                ,'sql_blocks/music/data/Singer.csv' singer
+        WHERE
+                (album.artist_id = singer.id)
+    """).lower()
+    return SequenceMatcher(None, txt1, txt2).ratio() > 0.66
+
+def tables_without_JOIN() -> Select:
+    SQLObject.ALIAS_FUNC = lambda t: t.lower()
+    singer = Select(
+        " 'sql_blocks/music/data/Singer.csv' ", name=NamedField('artist_name'),
+        id=PrimaryKey
+    )
+    album = Select (
+        " 'sql_blocks/music/data/Album.csv' ", name=NamedField('album_name'),
+        artist_id=Where.join(singer),
+        year_recorded=Field
+    )
+    return album

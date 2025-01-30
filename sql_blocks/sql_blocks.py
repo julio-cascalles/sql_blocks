@@ -42,17 +42,23 @@ class SQLObject:
         if not table_name:
             return
         cls = SQLObject
+        is_file_name = any([
+            '/' in table_name, '.' in table_name
+        ])
+        ref = table_name
+        if is_file_name:
+            ref = table_name.split('/')[-1].split('.')[0]
         if cls.ALIAS_FUNC:
-            self.__alias = cls.ALIAS_FUNC(table_name)
+            self.__alias = cls.ALIAS_FUNC(ref)
         elif ' ' in table_name.strip():
             table_name, self.__alias = table_name.split()
-        elif '_' in table_name:
+        elif '_' in ref:
             self.__alias = ''.join(
                 word[0].lower()
-                for word in table_name.split('_')
+                for word in ref.split('_')
             )
         else:
-            self.__alias = table_name.lower()[:3]
+            self.__alias = ref.lower()[:3]
         self.values.setdefault(FROM, []).append(f'{table_name} {self.alias}')
 
     @property
@@ -423,12 +429,12 @@ class Position(Enum):
 class Where:
     prefix = ''
 
-    def __init__(self, expr: str):
-        self.expr = expr
+    def __init__(self, content: str):
+        self.content = content
 
     @classmethod
     def __constructor(cls, operator: str, value):
-        return cls(expr=f'{operator} {quoted(value)}')
+        return cls(f'{operator} {quoted(value)}')
 
     @classmethod
     def eq(cls, value):
@@ -472,15 +478,33 @@ class Where:
 
     @classmethod
     def formula(cls, formula: str):
-        return cls( ExpressionField(formula) )
+        where = cls( ExpressionField(formula) )
+        where.add = where.add_expression
+        return where
+
+    def add_expression(self, name: str, main: SQLObject):
+        self.content = self.content.format(name, main)
+        main.values.setdefault(WHERE, []).append('{} {}'.format(
+            self.prefix, self.content
+        ))
+
+    @classmethod
+    def join(cls, query: SQLObject):
+        where = cls(query)
+        where.add = where.add_join
+        return where
+
+    def add_join(self, name: str, main: SQLObject):
+        query = self.content
+        main.values[FROM].append(f',{query.table_name} {query.alias}')
+        for key in USUAL_KEYS:
+            main.update_values(key, query.values.get(key, []))
+        main.values.setdefault(WHERE, []).append('({a1}.{f1} = {a2}.{f2})'.format(
+            a1=main.alias, f1=name,
+            a2=query.alias, f2=query.key_field
+        ))
 
     def add(self, name: str, main: SQLObject):
-        if isinstance(self.expr, ExpressionField):
-            self.expr = self.expr.format(name, main)
-            main.values.setdefault(WHERE, []).append('{} {}'.format(
-                self.prefix, self.expr
-            ))
-            return
         func_type = FUNCTION_CLASS.get(name.lower())
         exists = any(
             main.is_named_field(fld, SELECT)
@@ -492,7 +516,7 @@ class Where:
         elif not exists:
             name = Field.format(name, main)
         main.values.setdefault(WHERE, []).append('{}{} {}'.format(
-            self.prefix, name, self.expr
+            self.prefix, name, self.content
         ))
 
 
@@ -500,6 +524,7 @@ eq, contains, gt, gte, lt, lte, is_null, inside = (
     getattr(Where, method) for method in 
     ('eq', 'contains', 'gt', 'gte', 'lt', 'lte', 'is_null', 'inside')
 ) 
+startswith, endswith = [lambda x: contains(x, pos) for pos in Position if pos.value]
 
 
 class Not(Where):
@@ -507,7 +532,7 @@ class Not(Where):
 
     @classmethod
     def eq(cls, value):
-        return Where(expr=f'<> {quoted(value)}')
+        return Where(f'<> {quoted(value)}')
 
 
 class Case:
@@ -548,7 +573,7 @@ class Options:
         child: Where
         for field, child in self.__children.items():
             conditions.append(' {} {} '.format(
-                Field.format(field, main), child.expr
+                Field.format(field, main), child.content
             ))
         main.values.setdefault(WHERE, []).append(
             '(' + logical_separator.join(conditions) + ')'
@@ -647,7 +672,7 @@ class Having:
 
     def add(self, name: str, main:SQLObject):
         main.values[GROUP_BY][-1] += ' HAVING {} {}'.format(
-            self.function.format(name, main), self.condition.expr
+            self.function.format(name, main), self.condition.content
         )
     
     @classmethod
@@ -1451,11 +1476,11 @@ class CTE:
         return '\n\t'.join(result)
 
     def __str__(self) -> str:
-        return 'WITH {}{} AS (\n\t{}\n)SELECT * FROM {}'.format(
-            self.prefix, self.name, 
-            '\nUNION ALL\n\t'.join(
+        return 'WITH {prefix}{name} AS (\n\t{queries}\n)SELECT * FROM {name}'.format(
+            prefix=self.prefix, name=self.name, 
+            queries='\nUNION ALL\n\t'.join(
                 self.format(q) for q in self.query_list
-            ), self.name
+            )
         )
 
 class Recursive(CTE):
@@ -1584,7 +1609,7 @@ def parser_class(text: str) -> Parser:
     return None
 
 
-def detect(text: str, join_queries: bool = True) -> Select:
+def detect(text: str, join_queries: bool = True) -> Select | list[Select]:
     from collections import Counter
     parser = parser_class(text)
     if not parser:
@@ -1607,15 +1632,3 @@ def detect(text: str, join_queries: bool = True) -> Select:
         result += query
     return result
 
-
-if __name__ == "__main__":
-    MY_NAME = 'Júlio Cascalles'
-    # query = Select('SocialMedia s', post=Count, reaction=Sum, user=GroupBy)
-    # print( CTE('Metrics', [query]) )
-    q1 = Select(
-        'SocialMedia me', name=[ eq(MY_NAME), Field ]
-    )
-    q2 = Select(
-        'SocialMedia you', name=Field, id=Where.formula('{af} = n.friend')
-    )
-    print( Recursive('Network', [q1, q2]) )
