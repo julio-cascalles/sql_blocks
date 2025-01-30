@@ -136,3 +136,12 @@ def is_expected_expression(query: Select, elements: list) -> bool:
             return False
         txt2 = field.lower()
     return SequenceMatcher(None, txt1, txt2).ratio() > 0.66
+
+def like_conditions() -> list:
+    query = Select(
+        'http://datasets.com/ecommerce/data/Customers.csv',
+        first_name=startswith('Julio'),
+        middle_name=contains('Cesar'),
+        last_name=endswith('Cascalles'),
+    )
+    return [v.split(' LIKE ')[-1] for v in query.values[WHERE]]

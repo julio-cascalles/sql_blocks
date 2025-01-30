@@ -139,6 +139,35 @@ FROM
 ```
 
 ---
+**5.1  Multiple tables without JOIN**
+> Warning: This is **NOT** recommended!  ⛔
+
+
+#### Example:
+    singer = Select(
+        "Singer artist", id=PrimaryKey,
+        name=NamedField('artist_name')
+    )
+    album = Select (
+        "Album album",
+        name=NamedField('album_name'),
+        artist_id=Where.join(singer), #  <===== 👀
+    )
+**>> print(query)**    
+
+    SELECT
+            album.name as album_name,
+            artist.name as artist_name,
+            album.year_recorded
+    FROM
+            'sql_blocks/music/data/Album.csv' album
+            ,'sql_blocks/music/data/Singer.csv' artist
+    WHERE
+            (album.artist_id = artist.id)
+
+
+
+---
 ### 6 - The reverse process (parse):
 ```
 text = """

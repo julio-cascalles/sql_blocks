@@ -441,11 +441,11 @@ class Where:
         return cls.__constructor('=', value)
 
     @classmethod
-    def contains(cls, content: str, pos: Position = Position.Middle):
+    def contains(cls, text: str, pos: Position = Position.Middle):
         return cls(
             "LIKE '{}{}{}'".format(
                 '%' if pos != Position.StartsWith else '',
-                content,
+                text,
                 '%' if pos != Position.EndsWith else ''
             )
         )
@@ -524,7 +524,10 @@ eq, contains, gt, gte, lt, lte, is_null, inside = (
     getattr(Where, method) for method in 
     ('eq', 'contains', 'gt', 'gte', 'lt', 'lte', 'is_null', 'inside')
 ) 
-startswith, endswith = [lambda x: contains(x, pos) for pos in Position if pos.value]
+startswith, endswith = [
+    lambda x: contains(x, Position.StartsWith),
+    lambda x: contains(x, Position.EndsWith)
+]
 
 
 class Not(Where):

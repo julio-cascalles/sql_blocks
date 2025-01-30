@@ -4,7 +4,7 @@ from tests.basic import (
     query_reference, two_queries_same_table,
     select_product, extract_subqueries,
     select_expression_field, is_expected_expression, 
-    EXPR_ARR1, EXPR_ARR2
+    EXPR_ARR1, EXPR_ARR2, like_conditions
 )
 from tests.rules import (
     optimized_select_in,
@@ -223,3 +223,8 @@ def test_cte():
 def test_multiple_tables_without_JOIN():
     twj = tables_without_JOIN()
     assert compare_join_condition(twj)
+
+def test_like_conditions():
+    assert like_conditions() == [
+        "'Julio%'", "'%Cesar%'", "'%Cascalles'",
+    ]
