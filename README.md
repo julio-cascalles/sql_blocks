@@ -83,10 +83,7 @@ query = Select('Movie m', title=Field,
         awards=contains("Oscar")
     )
     AND=Options(
-        ..., name=contains(
-            'Chris',
-            Position.StartsWith
-        )
+        ..., name=startswith('Chris')
     )
 ```
 
@@ -160,8 +157,8 @@ FROM
             artist.name as artist_name,
             album.year_recorded
     FROM
-            'sql_blocks/music/data/Album.csv' album
-            ,'sql_blocks/music/data/Singer.csv' artist
+            Album album
+            ,Singer artist
     WHERE
             (album.artist_id = artist.id)
 
@@ -397,7 +394,7 @@ m2 = Select(
     query = Select(
         'Installments i', due_date=Field,  customer=Select(
             'Customer c', id=PrimaryKey,
-            name=contains('Smith', Position.EndsWith)
+            name=endswith('Smith')
         )
     )
     print(query)

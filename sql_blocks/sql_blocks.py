@@ -1457,33 +1457,34 @@ class NotSelectIN(SelectIN):
     condition_class = Not
 
 
-class CTE:
+class CTE(Select):
     prefix = ''
 
-    def __init__(self, name: str, query_list: list[Select]):
-        self.name = name
+    def __init__(self, table_name: str, query_list: list[Select]):
+        super().__init__(table_name)
         for query in query_list:
             query.break_lines = False
         self.query_list = query_list
 
-    def format(self, query: Select) -> str:
-        LINE_MAX_SIZE = 50
-        result, line = [], ''
-        for word in str(query).split(' '):
-            if len(line) >= LINE_MAX_SIZE and word in KEYWORD:
-                result.append(line)
-                line = ''
-            line += word + ' '
-        if line:
-            result.append(line)
-        return '\n\t'.join(result)
-
     def __str__(self) -> str:
-        return 'WITH {prefix}{name} AS (\n\t{queries}\n)SELECT * FROM {name}'.format(
-            prefix=self.prefix, name=self.name, 
-            queries='\nUNION ALL\n\t'.join(
-                self.format(q) for q in self.query_list
-            )
+        # ---------------------------------------------------------
+        def justify(query: Select) -> str:
+            LINE_MAX_SIZE = 50
+            result, line = [], ''
+            for word in str(query).split(' '):
+                if len(line) >= LINE_MAX_SIZE and word in KEYWORD:
+                    result.append(line)
+                    line = ''
+                line += word + ' '
+            if line:
+                result.append(line)
+            return '\n\t'.join(result)
+        # ---------------------------------------------------------
+        return 'WITH {}{} AS (\n\t{}\n){}'.format(
+            self.prefix, self.table_name, 
+            '\nUNION ALL\n\t'.join(
+                justify(q) for q in self.query_list
+            ), super().__str__()
         )
 
 class Recursive(CTE):
@@ -1491,8 +1492,8 @@ class Recursive(CTE):
 
     def __str__(self) -> str:
         if len(self.query_list) > 1:
-            alias = self.name[0].lower()
-            self.query_list[-1].values[FROM].append(f', {self.name} {alias}')
+            self.query_list[-1].values[FROM].append(
+                f', {self.table_name} {self.alias}')
         return super().__str__()
 
 
@@ -1635,3 +1636,15 @@ def detect(text: str, join_queries: bool = True) -> Select | list[Select]:
         result += query
     return result
 
+
+if __name__ == '__main__':
+    def get_query(i: int):
+        query = Select(f"Folks f{i}")
+        query.add_fields('id,name,father,mother,birth')
+        return query
+    q1, q2 = [get_query(i) for i in (1, 2)]
+    q1(id=eq(32630))
+    q2(
+        id=Where.formula('({af} = a.father OR {af} = a.mother)')
+    )        
+    print( Recursive('ancestors a', [q1, q2]) )

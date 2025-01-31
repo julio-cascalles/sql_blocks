@@ -11,8 +11,8 @@ def compare_recursive_text(obj: Recursive) -> bool:
                 FROM Folks f1 WHERE f1.id = 32630
         UNION ALL
                 SELECT f2.id, f2.name, f2.father, f2.mother, f2.birth
-                FROM Folks f2 , ancestors a WHERE  (f2.id = a.father OR f2.id = a.mother)
-        )SELECT * FROM ancestrais
+                FROM Folks f2 , ancestors a WHERE (f2.id = a.father OR f2.id = a.mother)
+        )SELECT * FROM ancestors
     """).lower()
     return SequenceMatcher(None, txt1, txt2).ratio() > 0.66
 
@@ -25,5 +25,5 @@ def recursive_obj():
     q1(id=eq(32630))
     q2(
         id=Where.formula('({af} = a.father OR {af} = a.mother)')
-    )        
-    return Recursive('ancestors', [q1, q2])
+    )
+    return Recursive('ancestors a', [q1, q2])
