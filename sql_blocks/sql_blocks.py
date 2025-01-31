@@ -1624,7 +1624,7 @@ def detect(text: str, join_queries: bool = True) -> Select | list[Select]:
                 continue
             pos = [ f.span() for f in re.finditer(fr'({table})[(]', text) ]
             for begin, end in pos[::-1]:
-                new_name = f'{table}_{count}'  # See set_table (line 45)
+                new_name = f'{table}_{count}'  # See set_table (line 55)
                 Select.EQUIVALENT_NAMES[new_name] = table
                 text = text[:begin] + new_name + '(' + text[end:]
                 count -= 1
@@ -1636,15 +1636,3 @@ def detect(text: str, join_queries: bool = True) -> Select | list[Select]:
         result += query
     return result
 
-
-if __name__ == '__main__':
-    def get_query(i: int):
-        query = Select(f"Folks f{i}")
-        query.add_fields('id,name,father,mother,birth')
-        return query
-    q1, q2 = [get_query(i) for i in (1, 2)]
-    q1(id=eq(32630))
-    q2(
-        id=Where.formula('({af} = a.father OR {af} = a.mother)')
-    )        
-    print( Recursive('ancestors a', [q1, q2]) )
