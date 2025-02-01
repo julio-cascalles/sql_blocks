@@ -474,6 +474,7 @@ ORDER BY
 * `^` Put the field in the ORDER BY clause
 * `@` Immediately after the table name, it indicates the grouping field.
 * `$` For SQL functions like **avg**$_field_, **sum**$_field_, **count**$_field_...
+* `*` Sets the primary key field.
 
 
 ---
@@ -656,7 +657,7 @@ For example, if your query is going to run on Oracle, do the following:
 
 ### 17 - CTE and Recursive classes
 
-* **_CTE class_**
+* **17.1 - _CTE class_**
 ```
     query = Select(
         'SocialMedia s', post=Count, reaction=Sum, user=GroupBy
@@ -670,7 +671,7 @@ The result is...
     )SELECT * FROM Metrics
 ```
 
-* **_Recursive class_**
+* **17.2 - _Recursive class_**
 ```
 q1 = Select(
     'SocialMedia me', name=[ eq(MY_NAME), Field ]
@@ -683,8 +684,90 @@ print( Recursive('Network', [q1, q2]) )
 The result is...
 ```
 WITH RECURSIVE Network AS (
-        SELECT me.name FROM SocialMedia me WHERE me.name = 'Júlio Cascalles'
+        SELECT me.name FROM SocialMedia me WHERE 
+        me.name = 'Júlio Cascalles'
 UNION ALL
-        SELECT you.name FROM SocialMedia you , Network n WHERE  you.id = n.friend
+        SELECT you.name FROM SocialMedia you , Network n
+        WHERE  you.id = n.friend
 )SELECT * FROM Network
 ```
+
+* **17.2.1 - The `create` method** ... parameters :
+    - name: The name of the CTE
+    - pattern: A cypher script that defines the tables used
+    - formula: The format for `Where.formula` method _(*)_
+    - init_value: The value for the condition in the first table
+    - format (optional): If tables are files or internet hiperlinks, you may especify the extension and/or folder...
+> Example: 
+```
+    R = Recursive.create(
+        'Route R', 'Flyght(departure, arrival)',
+        '[2] = R.[1]',  'JFK',  format='.csv'
+    ) #                  ^^^--- Flyghts from JFK airport
+```
+_...Creates a recursive CTE called Route, using Flyght table, where the recursivity condition is Flyght.arrival equals to Route.departure_
+>> (*) -- Note that [1] and [2] refers to first field and second field. 😉
+
+Result:
+
+    WITH RECURSIVE Route AS (
+            SELECT f1.departure, f1.arrival
+            FROM Flyght.csv f1
+            WHERE f1.departure = 'JFK'
+    UNION ALL
+            SELECT f2.departure, f2.arrival
+            FROM Flyght.csv f2
+            , Route R
+            WHERE  f2.arrival = R.departure
+    )SELECT * FROM Route R
+
+**17.2.2 - The `join` method** 
+
+In the previous example, if you add this code...
+`R.join('Airport(*id,name)', 'departure, arrival', format='.csv')`
+
+...The result would be:
+
+    WITH RECURSIVE Route AS (
+        SELECT f1.departure, f1.arrival
+        FROM Flyght.csv f1
+        WHERE f1.departure = 'JFK'
+    UNION ALL
+        SELECT f2.departure, f2.arrival
+        FROM Flyght.csv f2
+        , Route R
+        WHERE  f2.arrival = R.departure
+    )SELECT
+        a1.name, a2.name
+    FROM
+        Route R
+        JOIN Airport.csv a2 ON (R.arrival = a2.id)
+        JOIN Airport.csv a1 ON (R.departure = a1.id)
+
+
+**17.2.3 - The `counter` method** 
+Adds an increment field in queries inside CTE:
+> Examples:
+* `R.counter('stops', 0)` # -- counter starts with 0 and increment +1
+* `R2.counter('generation', 5, '- 1')` # -- for the code below...
+```
+R2 = Recursive.create(
+    'Ancestors a', 'People(id,name,father,mother,birth)',
+    '(% = a.father OR % = a.mother)', 32630, '.parquet'
+)
+```
+...Results:
+
+    WITH RECURSIVE Ancestors AS (
+        SELECT p1.id, p1.name, p1.father, p1.mother, p1.birth,
+        5 AS generation  /* <<---- Most current generation ------------*/
+        FROM People.parquet p1 WHERE p1.id = 32630
+    UNION ALL
+        SELECT p2.id, p2.name, p2.father, p2.mother, p2.birth,
+        (generation- 1) AS generation /* <<-- Previous generation -----*/
+        FROM People.parquet p2 , Ancestors a WHERE  (p2.id = a.father OR p2.id = a.mother)
+    )SELECT * FROM Ancestors a
+
+
+>> Note: Comments added later.
+---

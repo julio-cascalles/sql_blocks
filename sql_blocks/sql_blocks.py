@@ -65,6 +65,11 @@ class SQLObject:
     def table_name(self) -> str:
         return self.values[FROM][0].split()[0]
     
+    def set_file_format(self, pattern: str):
+        if '{' not in pattern:
+            pattern = '{}' + pattern
+        self.values[FROM][0] = pattern.format(self.aka())
+
     @property
     def alias(self) -> str:
         if self.__alias:
@@ -366,15 +371,20 @@ class ExpressionField:
 class FieldList:
     separator = ','
 
-    def __init__(self, fields: list=[], class_types = [Field]):
+    def __init__(self, fields: list=[], class_types = [Field], ziped: bool=False):
         if isinstance(fields, str):
             fields = [
                 f.strip() for f in fields.split(self.separator)
             ]
         self.fields = fields
         self.class_types = class_types
+        self.ziped = ziped
 
     def add(self, name: str, main: SQLObject):
+        if self.ziped:  # --- One class per field...
+            for field, class_type in zip(self.fields, self.class_types):
+                class_type.add(field, main)
+            return
         for field in self.fields:
             for class_type in self.class_types:
                 class_type.add(field, main)
@@ -1112,7 +1122,11 @@ class CypherParser(Parser):
         if token in self.TOKEN_METHODS:
             return
         class_list = [Field]
-        if '$' in token:
+        if '*' in token:
+            token = token.replace('*', '')
+            self.queries[-1].key_field = token
+            return
+        elif '$' in token:
             func_name, token = token.split('$')
             if func_name == 'count':
                 if not token:
@@ -1136,10 +1150,13 @@ class CypherParser(Parser):
     def add_foreign_key(self, token: str, pk_field: str=''):
         curr, last = [self.queries[i] for i in (-1, -2)]
         if not pk_field:
-            if not last.values.get(SELECT):
-                raise IndexError(f'Primary Key not found for {last.table_name}.')
-            pk_field = last.values[SELECT][-1].split('.')[-1]
-            last.delete(pk_field, [SELECT], exact=True)
+            if last.key_field:
+                pk_field = last.key_field
+            else:
+                if not last.values.get(SELECT):
+                    raise IndexError(f'Primary Key not found for {last.table_name}.')
+                pk_field = last.values[SELECT][-1].split('.')[-1]
+                last.delete(pk_field, [SELECT], exact=True)
         if '{}' in token:
             foreign_fld = token.format(
                 last.table_name.lower()
@@ -1465,24 +1482,25 @@ class CTE(Select):
         for query in query_list:
             query.break_lines = False
         self.query_list = query_list
+        self.break_lines = False
 
     def __str__(self) -> str:
         # ---------------------------------------------------------
         def justify(query: Select) -> str:
-            LINE_MAX_SIZE = 50
             result, line = [], ''
-            for word in str(query).split(' '):
-                if len(line) >= LINE_MAX_SIZE and word in KEYWORD:
+            keywords = '|'.join(KEYWORD)
+            for word in re.split(fr'({keywords}|AND|OR|,)', str(query)):
+                if len(line) >= 65:
                     result.append(line)
                     line = ''
-                line += word + ' '
+                line += word
             if line:
                 result.append(line)
-            return '\n\t'.join(result)
+            return '\n    '.join(result)
         # ---------------------------------------------------------
-        return 'WITH {}{} AS (\n\t{}\n){}'.format(
+        return 'WITH {}{} AS (\n    {}\n){}'.format(
             self.prefix, self.table_name, 
-            '\nUNION ALL\n\t'.join(
+            '\nUNION ALL\n    '.join(
                 justify(q) for q in self.query_list
             ), super().__str__()
         )
@@ -1495,6 +1513,45 @@ class Recursive(CTE):
             self.query_list[-1].values[FROM].append(
                 f', {self.table_name} {self.alias}')
         return super().__str__()
+
+    @classmethod
+    def create(cls, name: str, pattern: str, formula: str, init_value, format: str=''):
+        SQLObject.ALIAS_FUNC = None
+        def get_field(obj: SQLObject, pos: int) -> str:
+            return obj.values[SELECT][pos].split('.')[-1]
+        t1, t2 = detect(
+            pattern*2, join_queries=False, format=format
+        )
+        pk_field = get_field(t1, 0)
+        foreign_key = ''
+        for num in re.findall(r'\[(\d+)\]', formula):
+            num = int(num)
+            if not foreign_key:
+                foreign_key = get_field(t2, num-1)
+                formula = formula.replace(f'[{num}]', '%')
+            else:
+                formula = formula.replace(f'[{num}]', get_field(t2, num-1))
+        Where.eq(init_value).add(pk_field, t1)
+        Where.formula(formula).add(foreign_key or pk_field, t2)
+        return cls(name, [t1, t2])
+
+    def join(self, pattern: str, fields: list | str, format: str):
+        if isinstance(fields, str):
+            count = len( fields.split(',') )
+        else:
+            count = len(fields)
+        queries = detect(
+            pattern*count, join_queries=False, format=format
+        )
+        FieldList(fields, queries, ziped=True).add('', self)
+        self.break_lines = True
+
+    def counter(self, name: str, start, increment: str='+1'):
+        for i, query in enumerate(self.query_list):
+            if i == 0:
+                Field.add(f'{start} AS {name}', query)
+            else:
+                Field.add(f'({name}{increment}) AS {name}', query)
 
 
 # ----- Rules -----
@@ -1613,7 +1670,7 @@ def parser_class(text: str) -> Parser:
     return None
 
 
-def detect(text: str, join_queries: bool = True) -> Select | list[Select]:
+def detect(text: str, join_queries: bool = True, format: str='') -> Select | list[Select]:
     from collections import Counter
     parser = parser_class(text)
     if not parser:
@@ -1629,10 +1686,14 @@ def detect(text: str, join_queries: bool = True) -> Select | list[Select]:
                 text = text[:begin] + new_name + '(' + text[end:]
                 count -= 1
     query_list = Select.parse(text, parser)
+    if format:
+        for query in query_list:
+            query.set_file_format(format)
     if not join_queries:
         return query_list
     result = query_list[0]
     for query in query_list[1:]:
         result += query
     return result
+
 

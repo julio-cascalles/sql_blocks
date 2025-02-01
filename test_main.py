@@ -32,7 +32,8 @@ from tests.functions import (
     DateDiff_function_variants
 )
 from tests.cte import(
-    recursive_obj, compare_recursive_text
+    basic_recursive_cte, compare_basic_recursive,
+    create_flight_routes, compare_created_routes
 )
 
 
@@ -217,8 +218,12 @@ def test_rule_replace_join_by_subselect():
     assert replace_join_by_subselect() == expected
 
 def test_cte():
-    r = recursive_obj()
-    assert compare_recursive_text(r)
+    r = basic_recursive_cte()
+    assert compare_basic_recursive(r)
+
+def test_cte_with_counter():
+    r = basic_recursive_cte(True)
+    assert compare_basic_recursive(r, True)
 
 def test_multiple_tables_without_JOIN():
     twj = tables_without_JOIN()
@@ -228,3 +233,11 @@ def test_like_conditions():
     assert like_conditions() == [
         "'Julio%'", "'%Cesar%'", "'%Cascalles'",
     ]
+
+def test_create_recursive():
+    r = create_flight_routes()
+    assert compare_created_routes(r)
+
+def test_create_joined_recursive():
+    r = create_flight_routes(True)
+    assert compare_created_routes(r, True)
