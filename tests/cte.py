@@ -39,12 +39,13 @@ def basic_recursive_cte(use_counter: bool=False):
     return R
 
 def create_flight_routes(join_airport: bool = False) -> Recursive:
+    FLIGHT_FIELDS = 'departure, arrival'
     R = Recursive.create(
-        'Route R', 'Flyght(departure, arrival)',
+        'Route R', f'Flyght({FLIGHT_FIELDS})',
         '[2] = R.[1]', 'JFK', '.csv'
     )
     if join_airport:
-        R.join('Airport(*id,name)', 'departure, arrival', format='.csv')
+        R.join('Airport(*id,name)', FLIGHT_FIELDS, format='.csv')
     return R
 
 def compare_created_routes(obj: Recursive, join_airport: bool = False) -> bool:
