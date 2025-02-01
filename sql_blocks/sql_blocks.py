@@ -1545,6 +1545,7 @@ class Recursive(CTE):
         )
         FieldList(fields, queries, ziped=True).add('', self)
         self.break_lines = True
+        return self
 
     def counter(self, name: str, start, increment: str='+1'):
         for i, query in enumerate(self.query_list):
@@ -1552,6 +1553,7 @@ class Recursive(CTE):
                 Field.add(f'{start} AS {name}', query)
             else:
                 Field.add(f'({name}{increment}) AS {name}', query)
+        return self
 
 
 # ----- Rules -----
@@ -1696,4 +1698,17 @@ def detect(text: str, join_queries: bool = True, format: str='') -> Select | lis
         result += query
     return result
 
+
+if __name__ == "__main__":
+    FLIGHT_FIELDS = 'departure, arrival'
+    R = Recursive.create(
+        'Route R', f'Flyght({FLIGHT_FIELDS})',
+        '[2] = R.[1]', 'JFK', '.csv'
+    ).join(
+        'Airport(*id,name)', FLIGHT_FIELDS, format='.parquet'
+    ).counter(
+        'stops', 0
+    )
+    print(R)
+    print('-'*50)
 
