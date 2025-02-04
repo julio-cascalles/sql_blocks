@@ -1135,7 +1135,13 @@ class CypherParser(Parser):
                 Count().As(token, extra_classes).add(pk_field, self.queries[-1])
                 return
             else:
-                class_list = [ FUNCTION_CLASS[func_name] ]
+                class_type = FUNCTION_CLASS.get(func_name)
+                if not class_type:
+                    raise ValueError(f'Unknown function `{func_name}`.')
+                if ':' in token:
+                    token, field_alias = token.split(':')
+                    class_type = class_type().As(field_alias)
+                class_list = [class_type]
         class_list += extra_classes
         FieldList(token, class_list).add('', self.queries[-1])
 
@@ -1699,15 +1705,8 @@ def detect(text: str, join_queries: bool = True, format: str='') -> Select | lis
 
 
 if __name__ == "__main__":
-    FLIGHT_FIELDS = 'departure, arrival'
-    R = Recursive.create(
-        'Route R', f'Flyght({FLIGHT_FIELDS})',
-        '[2] = R.[1]', 'JFK', '.csv'
-    ).join(
-        'Airport(*id,name)', FLIGHT_FIELDS, format='.parquet'
-    ).counter(
-        'stops', 0
+    CAMPO_MEDIA = 'MEDIA_SALARIAL_DEPTO'
+    employees = detect(
+        f'Employees@department_id(avg$salary:{CAMPO_MEDIA})'
     )
-    print(R)
-    print('-'*50)
-
+    print(employees)
