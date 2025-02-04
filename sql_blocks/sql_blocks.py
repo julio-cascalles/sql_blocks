@@ -1504,6 +1504,17 @@ class CTE(Select):
                 justify(q) for q in self.query_list
             ), super().__str__()
         )
+    def join(self, pattern: str, fields: list | str, format: str):
+        if isinstance(fields, str):
+            count = len( fields.split(',') )
+        else:
+            count = len(fields)
+        queries = detect(
+            pattern*count, join_queries=False, format=format
+        )
+        FieldList(fields, queries, ziped=True).add('', self)
+        self.break_lines = True
+        return self
 
 class Recursive(CTE):
     prefix = 'RECURSIVE '
@@ -1534,18 +1545,6 @@ class Recursive(CTE):
         Where.eq(init_value).add(pk_field, t1)
         Where.formula(formula).add(foreign_key or pk_field, t2)
         return cls(name, [t1, t2])
-
-    def join(self, pattern: str, fields: list | str, format: str):
-        if isinstance(fields, str):
-            count = len( fields.split(',') )
-        else:
-            count = len(fields)
-        queries = detect(
-            pattern*count, join_queries=False, format=format
-        )
-        FieldList(fields, queries, ziped=True).add('', self)
-        self.break_lines = True
-        return self
 
     def counter(self, name: str, start, increment: str='+1'):
         for i, query in enumerate(self.query_list):
