@@ -1510,7 +1510,7 @@ class CTE(Select):
                 justify(q) for q in self.query_list
             ), super().__str__()
         )
-    def join(self, pattern: str, fields: list | str, format: str):
+    def join(self, pattern: str, fields: list | str, format: str=''):
         if isinstance(fields, str):
             count = len( fields.split(',') )
         else:
