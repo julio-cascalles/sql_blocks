@@ -29,7 +29,8 @@ from tests.special_cases import (
 )
 from tests.functions import (
     diff_over_sum, function_fields,
-    DateDiff_function_variants
+    DateDiff_function_variants,
+    create_nested_functions, compare_nested_func_text
 )
 from tests.cte import(
     basic_recursive_cte, compare_basic_recursive,
@@ -178,11 +179,7 @@ def test_neo4J_with_WHERE():
 
 def test_group_cypher():
     q1 = group_cypher()
-    print('-*/-*/-*/-*/-*/-*/-*/-*/-*/-*/')
-    print(q1)
     q2 = cypher_group()
-    print('-*/-*/-*/-*/-*/-*/-*/-*/-*/-*/')
-    print(q2)
     assert q1 == q2
 
 def test_parser_classes():
@@ -192,7 +189,7 @@ def test_over():
     expected = {
         'sum',
         'partition by student_id order by due_date',
-        ' as sum_per_student'
+        'as sum_per_student'
     }
     assert diff_over_sum().intersection(expected) == expected
 
@@ -241,3 +238,7 @@ def test_create_recursive():
 def test_create_joined_recursive():
     r = create_flight_routes(True)
     assert compare_created_routes(r, True)
+
+def test_nested_functions():
+    obj = create_nested_functions()
+    assert compare_nested_func_text(obj)

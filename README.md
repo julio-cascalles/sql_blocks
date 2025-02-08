@@ -52,6 +52,16 @@ You can specify your own alias:  `a = Select('Actor a')`
 3.1 -- If you want to filter the field on a range of values:
 
 `a = Select( 'Actor a', age=Between(45, 69) )`
+...but if it is a time slot within the same day, you can do it like this:
+`Select(..., event_date=SameDay("2024-10-03"))`
+This results in
+```
+    SELECT ...
+    WHERE
+        event_date >= '2024-10-03 00:00:00' AND
+        event_date <= '2024-10-03 23:59:59'
+```
+---
 
 3.2 -- Sub-queries:
 ```
@@ -653,6 +663,21 @@ For example, if your query is going to run on Oracle, do the following:
 
 `Function.dialect = Dialect.ORACLE`
 
+
+>  Most of this functions you can use nested inside each other.
+*Example:*
+```
+    Select(...
+        event_date=Substring(
+            Cast("CHAR"), 12, 19 
+        ).As('time')
+    )
+```
+Results...
+```
+    SELECT ...
+    SubString(Cast(event_date As char), 12, 19) as time
+```
 ---
 
 ### 17 - CTE and Recursive classes

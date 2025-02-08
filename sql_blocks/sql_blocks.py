@@ -82,8 +82,14 @@ class SQLObject:
         return KEYWORD[key][0].format(appendix.get(key, ''))
 
     @staticmethod
-    def is_named_field(fld: str, key: str) -> bool:
-        return key == SELECT and re.search(r'\s+as\s+|\s+AS\s+', fld)
+    def is_named_field(fld: str, name: str='') -> bool:
+        return re.search(fr'(\s+as\s+|\s+AS\s+){name}', fld)
+
+    def has_named_field(self, name: str) -> bool:
+        return any(
+            self.is_named_field(fld, name)
+            for fld in self.values.get(SELECT, [])
+        )
 
     def diff(self, key: str, search_list: list, exact: bool=False) -> set:
         def disassemble(source: list) -> list:
@@ -100,7 +106,9 @@ class SQLObject:
         def field_set(source: list) -> set:
             return set(
                 (
-                    fld if self.is_named_field(fld, key) else
+                    fld 
+                    if key == SELECT and self.is_named_field(fld, key) 
+                    else
                     re.sub(pattern, '', cleanup(fld))
                 )
                 for string in disassemble(source)
@@ -150,7 +158,7 @@ class Field:
         name = name.strip()
         if name in ('_', '*'):
             name = '*'
-        elif not is_const():
+        elif not is_const() and not main.has_named_field(name):
             name = f'{main.alias}.{name}'
         if Function in cls.__bases__:
             name = f'{cls.__name__}({name})'
@@ -190,13 +198,15 @@ class Dialect(Enum):
 
 class Function:
     dialect = Dialect.ANSI
+    need_params = True
+    separator = ', '
 
     def __init__(self, *params: list):
         # --- Replace class methods by instance methods: ------
         self.add = self.__add
         self.format = self.__format
         # -----------------------------------------------------
-        self.params = [str(p) for p in params]
+        self.params = list(params)
         self.field_class = Field
         self.pattern = self.get_pattern()
         self.extra = {}
@@ -213,14 +223,24 @@ class Function:
     def __str__(self) -> str:
         return self.pattern.format(
             func_name=self.__class__.__name__,
-            params=', '.join(self.params)
+            params=self.separator.join(str(p) for p in self.params)
         )
+
+    def set_main_param(self, name: str, main: SQLObject) -> bool:
+        nested_functions = [
+            param for param in self.params if isinstance(param, Function)
+        ]
+        for func in nested_functions:
+            if func.need_params:
+                func.set_main_param(name, main)
+                return
+        self.params = [
+            Field.format(name, main)
+        ] + self.params
 
     def __format(self, name: str, main: SQLObject) -> str:
         if name not in '*_':
-            self.params = [
-                Field.format(name, main)
-            ] + self.params
+            self.set_main_param(name, main)
         return str(self)
 
     @classmethod
@@ -254,10 +274,11 @@ class DateDiff(Function):
     def get_pattern(self) -> str:
         def is_field_or_func(name: str) -> bool:
             return re.sub('[()]', '', name).isidentifier()
+        params = [str(p) for p in self.params]
         if self.dialect != Dialect.SQL_SERVER:
             return ' - '.join(
                 p if is_field_or_func(p) else f"'{p}'"
-                for p in self.params
+                for p in params
             )  # <====  Date subtract
         return super().get_pattern()
 
@@ -272,6 +293,8 @@ class Year(Function):
         return super().get_pattern()
 
 class Current_Date(Function):
+    need_params = False
+
     def get_pattern(self) -> str:
         database_type = {
             Dialect.ORACLE: SQL_CONST_SYSDATE,
@@ -343,7 +366,7 @@ class Lead(Window, Function):
 class Coalesce(Function):
     ...
 class Cast(Function):
-    ...
+    separator = ' As '
 
 
 FUNCTION_CLASS = {f.__name__.lower(): f for f in Function.__subclasses__()}
@@ -516,14 +539,9 @@ class Where:
 
     def add(self, name: str, main: SQLObject):
         func_type = FUNCTION_CLASS.get(name.lower())
-        exists = any(
-            main.is_named_field(fld, SELECT)
-            for fld in main.values.get(SELECT, [])
-            if name in fld
-        )
         if func_type:
             name = func_type.format('*', main)
-        elif not exists:
+        elif not main.has_named_field(name):
             name = Field.format(name, main)
         main.values.setdefault(WHERE, []).append('{}{} {}'.format(
             self.prefix, name, self.content
@@ -603,6 +621,14 @@ class Between:
     def add(self, name: str, main:SQLObject):
         Where.gte(self.start).add(name, main),
         Where.lte(self.end).add(name, main)
+
+class SameDay(Between):
+    def __init__(self, date: str):
+        super().__init__(
+            f'{date} 00:00:00',
+            f'{date} 23:59:59',
+        )
+
 
 
 class Clause:
@@ -1438,11 +1464,7 @@ class Select(SQLObject):
         Recognizes if the field is from the current table
         '''
         if key in (ORDER_BY, GROUP_BY) and '.' not in field:
-            return any(
-                self.is_named_field(fld, SELECT)
-                for fld in self.values[SELECT]
-                if field in fld
-            )
+            return main.has_named_field(field)
         return re.findall(f'\b*{self.alias}[.]', field) != []
 
     @classmethod
@@ -1455,12 +1477,10 @@ class Select(SQLObject):
         for rule in rules:
             rule.apply(self)
 
-    def add_fields(self, fields: list, order_by: bool=False, group_by:bool=False):
-        class_types = [Field]
-        if order_by:
-            class_types += [OrderBy]
-        if group_by:
-            class_types += [GroupBy]
+    def add_fields(self, fields: list, class_types=None):
+        if not class_types:
+            class_types = []
+        class_types += [Field]
         FieldList(fields, class_types).add('', self)
 
     def translate_to(self, language: QueryLanguage) -> str:
@@ -1491,12 +1511,17 @@ class CTE(Select):
         self.break_lines = False
 
     def __str__(self) -> str:
+        size = 0
+        for key in USUAL_KEYS:
+            size += sum(len(v) for v in self.values.get(key, []) if '\n' not in v)
+        if size > 70:
+            self.break_lines = True
         # ---------------------------------------------------------
         def justify(query: Select) -> str:
             result, line = [], ''
             keywords = '|'.join(KEYWORD)
             for word in re.split(fr'({keywords}|AND|OR|,)', str(query)):
-                if len(line) >= 65:
+                if len(line) >= 60:
                     result.append(line)
                     line = ''
                 line += word
@@ -1510,6 +1535,7 @@ class CTE(Select):
                 justify(q) for q in self.query_list
             ), super().__str__()
         )
+
     def join(self, pattern: str, fields: list | str, format: str=''):
         if isinstance(fields, str):
             count = len( fields.split(',') )
@@ -1702,11 +1728,4 @@ def detect(text: str, join_queries: bool = True, format: str='') -> Select | lis
     for query in query_list[1:]:
         result += query
     return result
-
-
-if __name__ == "__main__":
-    CAMPO_MEDIA = 'MEDIA_SALARIAL_DEPTO'
-    employees = detect(
-        f'Employees@department_id(avg$salary:{CAMPO_MEDIA})'
-    )
-    print(employees)
+# ===========================================================================================//

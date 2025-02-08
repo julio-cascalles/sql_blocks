@@ -44,7 +44,7 @@ def many_fields_and_groups() -> dict:
     query.add_fields(
         'user_id, created_at',
         # ['user_id', 'created_at'],
-        order_by=True, group_by=True
+        [OrderBy, GroupBy]
     )
     return query.values
 
