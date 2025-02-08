@@ -678,6 +678,22 @@ Results...
     SELECT ...
     SubString(Cast(event_date As char), 12, 19) as time
 ```
+
+>> `Function.auto_convert` option (default: True)
+
+- Put Cast(...) when there is a difference between the types of the parameter and the return of the nested function
+```
+birth=Round( DateDiff(Current_Date()) ).As('age')
+```
+...Returns...
+```
+SELECT
+    Round(
+        Cast(Current_Date() - p.birth As FLOAT)
+       /* ^^^  */
+    ) as age
+...
+```
 ---
 
 ### 17 - CTE and Recursive classes

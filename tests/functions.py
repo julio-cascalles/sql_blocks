@@ -80,3 +80,14 @@ def compare_nested_func_text(obj: Select) -> bool:
                 tra.event_date <= '2024-10-03 23:59:59'
     """).lower()
     return SequenceMatcher(None, txt1, txt2).ratio() > 0.66
+
+def create_auto_convert_function() -> Select:
+    return Select(
+        'Person p',
+        birth=Round( DateDiff(Current_Date()) ).As('age')
+    )
+
+def compare_auto_convert_text(obj: Select) -> bool:
+    txt1 = obj.values[SELECT][-1].lower()
+    txt2 = "Round(Cast(Current_Date() - p.birth As FLOAT)) as age".lower()
+    return SequenceMatcher(None, txt1, txt2).ratio() > 0.66

@@ -196,17 +196,35 @@ class Dialect(Enum):
     POSTGRESQL = 3
     MYSQL = 4
 
+SQL_TYPES = 'CHAR INT DATE FLOAT ANY'.split()
+CHAR, INT, DATE, FLOAT, ANY  =  SQL_TYPES
+
 class Function:
     dialect = Dialect.ANSI
-    need_params = True
+    inputs = None
+    output = None
     separator = ', '
+    auto_convert = True
+    append_param = False
 
     def __init__(self, *params: list):
+        def set_func_types(param):
+            if self.auto_convert and isinstance(param, Function):
+                func = param
+                main_param = self.inputs[0]
+                unfriendly = all([
+                    func.output != main_param,
+                    func.output != ANY,
+                    main_param  != ANY
+                ])
+                if unfriendly:
+                    return Cast(func, main_param)
+            return param
         # --- Replace class methods by instance methods: ------
         self.add = self.__add
         self.format = self.__format
         # -----------------------------------------------------
-        self.params = list(params)
+        self.params = [set_func_types(p) for p in params]
         self.field_class = Field
         self.pattern = self.get_pattern()
         self.extra = {}
@@ -231,12 +249,14 @@ class Function:
             param for param in self.params if isinstance(param, Function)
         ]
         for func in nested_functions:
-            if func.need_params:
+            if func.inputs:
                 func.set_main_param(name, main)
                 return
-        self.params = [
-            Field.format(name, main)
-        ] + self.params
+        new_params = [Field.format(name, main)]
+        if self.append_param:
+            self.params += new_params
+        else:
+            self.params = new_params + self.params         
 
     def __format(self, name: str, main: SQLObject) -> str:
         if name not in '*_':
@@ -260,6 +280,9 @@ class Function:
 
 # ---- String Functions: ---------------------------------
 class SubString(Function):
+    inputs = [CHAR, INT, INT]
+    output = CHAR
+
     def get_pattern(self) -> str:
         if self.dialect in (Dialect.ORACLE, Dialect.MYSQL):
             return 'Substr({params})'
@@ -267,33 +290,54 @@ class SubString(Function):
 
 # ---- Numeric Functions: --------------------------------
 class Round(Function):
-    ...
+    inputs = [FLOAT]
+    output = FLOAT
 
 # --- Date Functions: ------------------------------------
 class DateDiff(Function):
-    def get_pattern(self) -> str:
+    inputs = [DATE]
+    output = DATE
+    append_param = True
+
+    def __str__(self) -> str:
         def is_field_or_func(name: str) -> bool:
-            return re.sub('[()]', '', name).isidentifier()
-        params = [str(p) for p in self.params]
+            candidate = re.sub(
+                '[()]', '', name.split('.')[-1]
+            )
+            return candidate.isidentifier()
         if self.dialect != Dialect.SQL_SERVER:
+            params = [str(p) for p in self.params]
             return ' - '.join(
                 p if is_field_or_func(p) else f"'{p}'"
                 for p in params
             )  # <====  Date subtract
-        return super().get_pattern()
+        return super().__str__()
 
-class Year(Function):
+
+class DatePart(Function):
+    inputs = [DATE]
+    output = INT
+
     def get_pattern(self) -> str:
+        interval = self.__class__.__name__
         database_type = {
-            Dialect.ORACLE: 'Extract(YEAR FROM {params})',
-            Dialect.POSTGRESQL: "Date_Part('year', {params})",
+            Dialect.ORACLE: 'Extract('+interval+' FROM {params})',
+            Dialect.POSTGRESQL: "Date_Part('"+interval+"', {params})",
         }
         if self.dialect in database_type:
             return database_type[self.dialect]
         return super().get_pattern()
 
+class Year(DatePart):
+    ...
+class Month(DatePart):
+    ...
+class Day(DatePart):
+    ...
+
+
 class Current_Date(Function):
-    need_params = False
+    output = DATE
 
     def get_pattern(self) -> str:
         database_type = {
@@ -364,8 +408,12 @@ class Lead(Window, Function):
 
 # ---- Conversions and other Functions: ---------------------
 class Coalesce(Function):
-    ...
+    inputs = [ANY]
+    output = ANY
+    
 class Cast(Function):
+    inputs = [ANY]
+    output = ANY
     separator = ' As '
 
 

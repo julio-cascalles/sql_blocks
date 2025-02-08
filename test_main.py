@@ -30,7 +30,8 @@ from tests.special_cases import (
 from tests.functions import (
     diff_over_sum, function_fields,
     DateDiff_function_variants,
-    create_nested_functions, compare_nested_func_text
+    create_nested_functions, compare_nested_func_text,
+    create_auto_convert_function, compare_auto_convert_text
 )
 from tests.cte import(
     basic_recursive_cte, compare_basic_recursive,
@@ -242,3 +243,7 @@ def test_create_joined_recursive():
 def test_nested_functions():
     obj = create_nested_functions()
     assert compare_nested_func_text(obj)
+
+def test_auto_convert_func():
+    obj = create_auto_convert_function()
+    assert compare_auto_convert_text(obj)
