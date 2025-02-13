@@ -244,6 +244,15 @@ class Function:
             params=self.separator.join(str(p) for p in self.params)
         )
 
+    @classmethod
+    def help(cls) -> str:
+        descr = ' '.join(B.__name__ for B in cls.__bases__)
+        params = cls.inputs or ''
+        return cls().get_pattern().format(
+            func_name=f'{descr} {cls.__name__}',
+            params=cls.separator.join(str(p) for p in params)
+        ) + f'  Return {cls.output}'
+
     def set_main_param(self, name: str, main: SQLObject) -> bool:
         nested_functions = [
             param for param in self.params if isinstance(param, Function)
@@ -378,7 +387,8 @@ class Frame:
 
 
 class Aggregate(Frame):
-    ...
+    inputs = [FLOAT]
+    output = FLOAT
 
 class Window(Frame):
     ...
@@ -397,13 +407,16 @@ class Count(Aggregate, Function):
 
 # ---- Window Functions: -----------------------------------
 class Row_Number(Window, Function):
-    ... 
+    output = INT
+
 class Rank(Window, Function):
-    ... 
+    output = INT
+
 class Lag(Window, Function):
-    ...
+    output = ANY
+
 class Lead(Window, Function):
-    ...
+    output = ANY
 
 
 # ---- Conversions and other Functions: ---------------------
@@ -1441,15 +1454,18 @@ class Select(SQLObject):
 
     def add(self, name: str, main: SQLObject):
         old_tables = main.values.get(FROM, [])
-        new_tables = set([
-            '{jt}JOIN {tb} {a2} ON ({a1}.{f1} = {a2}.{f2})'.format(
+        if len(self.values[FROM]) > 1:
+            old_tables += self.values[FROM][1:]
+        new_tables = []
+        row = '{jt}JOIN {tb} {a2} ON ({a1}.{f1} = {a2}.{f2})'.format(
                 jt=self.join_type.value,
                 tb=self.aka(),
                 a1=main.alias, f1=name,
                 a2=self.alias, f2=self.key_field
             )
-        ] + old_tables[1:])
-        main.values[FROM] = old_tables[:1] + list(new_tables)
+        if row not in old_tables[1:]:
+            new_tables.append(row)
+        main.values[FROM] = old_tables[:1] + new_tables + old_tables[1:]
         for key in USUAL_KEYS:
             main.update_values(key, self.values.get(key, []))
 
@@ -1569,7 +1585,7 @@ class CTE(Select):
             result, line = [], ''
             keywords = '|'.join(KEYWORD)
             for word in re.split(fr'({keywords}|AND|OR|,)', str(query)):
-                if len(line) >= 60:
+                if len(line) >= 50:
                     result.append(line)
                     line = ''
                 line += word
@@ -1777,3 +1793,30 @@ def detect(text: str, join_queries: bool = True, format: str='') -> Select | lis
         result += query
     return result
 # ===========================================================================================//
+
+if __name__ == "__main__":
+    print('='*50)
+    visitante = Select(
+        'Pessoa p1',
+        nome=NamedField('nome_visitante'),
+        tipo=eq('V'), cpf=PrimaryKey
+    )
+    dono_do_apto = Select(
+        'Apartamento A',
+        dono=Select(
+            'Pessoa p2',
+            cpf=PrimaryKey,
+            nome=NamedField('nome_morador')
+        ), 
+        id=PrimaryKey
+    )
+    movimento = Select(
+        'Movimento M',
+        entrada_saida=eq('E'),
+        apartamento=dono_do_apto,
+        pessoa=visitante
+    )
+    print(dono_do_apto)
+    print('-'*50)
+    print(movimento)
+    print('='*50)
