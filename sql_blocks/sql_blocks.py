@@ -1532,7 +1532,7 @@ class Select(SQLObject):
         Recognizes if the field is from the current table
         '''
         if key in (ORDER_BY, GROUP_BY) and '.' not in field:
-            return main.has_named_field(field)
+            return self.has_named_field(field)
         return re.findall(f'\b*{self.alias}[.]', field) != []
 
     @classmethod
@@ -1797,22 +1797,3 @@ def detect(text: str, join_queries: bool = True, format: str='') -> Select | lis
         result += query
     return result
 # ===========================================================================================//
-
-if __name__ == "__main__":
-    print('='*50)
-    movimento = Select(
-        'Movimento.parquet M',
-        direcao=Case('entrada_saida').when(
-            eq('E'), 1
-        ).else_value( -1 ),
-        pessoa=Field
-    )
-    print(movimento)
-    print('-'*50)
-    cte = CTE('Ciclo C', [movimento])
-    cte(
-        pessoa=[GroupBy, Field],
-        direcao=Having.sum(gt(0))
-    )
-    print(cte)
-    print('='*50)
