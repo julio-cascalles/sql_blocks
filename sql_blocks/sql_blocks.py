@@ -633,20 +633,24 @@ class Case:
         self.default = None
         self.field = field
 
-    def when(self, condition: Where, result: str):
+    def when(self, condition: Where, result):
+        if isinstance(result, str):
+            result = quoted(result)
         self.__conditions[result] = condition
         return self
     
-    def else_value(self, default: str):
+    def else_value(self, default):
+        if isinstance(default, str):
+            default = quoted(default)
         self.default = default
         return self
     
     def add(self, name: str, main: SQLObject):
         field = Field.format(self.field, main)
-        default = quoted(self.default)
+        default = self.default
         name = 'CASE \n{}\n\tEND AS {}'.format(
             '\n'.join(
-                f'\t\tWHEN {field} {cond.expr} THEN {quoted(res)}'
+                f'\t\tWHEN {field} {cond.content} THEN {res}'
                 for res, cond in self.__conditions.items()
             ) + f'\n\t\tELSE {default}' if default else '',
             name
@@ -1796,27 +1800,19 @@ def detect(text: str, join_queries: bool = True, format: str='') -> Select | lis
 
 if __name__ == "__main__":
     print('='*50)
-    visitante = Select(
-        'Pessoa p1',
-        nome=NamedField('nome_visitante'),
-        tipo=eq('V'), cpf=PrimaryKey
-    )
-    dono_do_apto = Select(
-        'Apartamento A',
-        dono=Select(
-            'Pessoa p2',
-            cpf=PrimaryKey,
-            nome=NamedField('nome_morador')
-        ), 
-        id=PrimaryKey
-    )
     movimento = Select(
-        'Movimento M',
-        entrada_saida=eq('E'),
-        apartamento=dono_do_apto,
-        pessoa=visitante
+        'Movimento.parquet M',
+        direcao=Case('entrada_saida').when(
+            eq('E'), 1
+        ).else_value( -1 ),
+        pessoa=Field
     )
-    print(dono_do_apto)
-    print('-'*50)
     print(movimento)
+    print('-'*50)
+    cte = CTE('Ciclo C', [movimento])
+    cte(
+        pessoa=[GroupBy, Field],
+        direcao=Having.sum(gt(0))
+    )
+    print(cte)
     print('='*50)
