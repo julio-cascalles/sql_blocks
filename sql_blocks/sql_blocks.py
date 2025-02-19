@@ -829,7 +829,7 @@ class QueryLanguage:
         return  self.join_with_tabs(values, ' AND ')
 
     def sort_by(self, values: list) -> str:
-        return self.join_with_tabs(values)
+        return self.join_with_tabs(values, ',')
 
     def set_group(self, values: list) -> str:
         return  self.join_with_tabs(values, ',')
@@ -1797,3 +1797,12 @@ def detect(text: str, join_queries: bool = True, format: str='') -> Select | lis
         result += query
     return result
 # ===========================================================================================//
+
+
+if __name__ == "__main__":
+    query = Select(
+        'Table T',
+        name=[Field, OrderBy],
+        value=[Field, OrderBy],
+    )
+    print(query)

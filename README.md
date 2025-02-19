@@ -37,6 +37,12 @@ You can specify your own alias:  `a = Select('Actor a')`
 ...should return: 
 **SELECT extract(year from due_date) as YEAR_ref...**
 
+Possible tags in ExpressionField:
+* {f} - The field name;
+* {af} - The field name preceded by the table alias;
+    > Can be written as {a.f} or %
+* {t} - The table name;
+* {a} - Only the table alias.
 ---
 
 ### 3 - To set conditions, use **Where**:
@@ -435,7 +441,7 @@ WHERE
     query = Select('post p')
     query.add_fields(
         'user_id, created_at',
-        order_by=True, group_by=True
+        [OrderBy, GroupBy]
     )
 ```
 ...is the same as...
