@@ -1720,6 +1720,8 @@ class RuleDateFuncReplace(Rule):
     @classmethod
     def apply(cls, target: Select):
         for i, condition in enumerate(target.values.get(WHERE, [])):
+            if not '(' in condition:
+                continue
             tokens = [
                 t.strip() for t in cls.REGEX.split(condition) if t.strip()
             ]
@@ -1801,8 +1803,26 @@ def detect(text: str, join_queries: bool = True, format: str='') -> Select | lis
 
 if __name__ == "__main__":
     query = Select(
-        'Table T',
-        name=[Field, OrderBy],
-        value=[Field, OrderBy],
+        'Matricula M',
+        aluno_id=Select(
+            'Aluno A',
+            nome=NamedField('nome_aluno'),
+            id=PrimaryKey
+        ),
+        curso=Select(
+            'Curso C',
+            nome=NamedField('nome_curso'),
+            id=PrimaryKey
+        )
     )
+    print('='*50)
     print(query)
+    print('-'*50)
+    m, c, a = Select.parse( str(query) )
+    m(inicio=[Not.gt('2024-11-15'), Field])
+    query = m + a
+    print(query)
+    print('-'*50)
+    query.optimize()
+    print(query)
+    print('='*50)
