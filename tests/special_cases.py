@@ -240,3 +240,20 @@ def tables_without_JOIN() -> Select:
         year_recorded=Field
     )
     return album
+
+def customers_without_orders(subtract: bool) -> Select:
+    TABLE_CUSTOMERS = 'customers c'
+    TABLE_ORDERS = 'orders o'
+    STATUS_DELIVERED_OK = 93
+    if subtract:
+        orders = Select(TABLE_ORDERS,
+            customer_id=ForeignKey(TABLE_CUSTOMERS.split()[0])
+        )
+        customers = Select(TABLE_CUSTOMERS, id=PrimaryKey, name=Field)
+        return customers - orders(status=eq(STATUS_DELIVERED_OK))
+    return Select(
+        TABLE_CUSTOMERS, name=Field,
+        id=NotSelectIN(
+            TABLE_ORDERS, customer_id=Field, status=eq(STATUS_DELIVERED_OK)
+        )
+    )

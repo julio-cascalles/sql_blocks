@@ -1473,9 +1473,15 @@ class Select(SQLObject):
         for key in USUAL_KEYS:
             main.update_values(key, self.values.get(key, []))
 
-    def __add__(self, other: SQLObject):
+    def copy(self) -> SQLObject:
         from copy import deepcopy
-        query = deepcopy(self)
+        return deepcopy(self)
+
+    def no_relation_error(self, other: SQLObject):
+        raise ValueError(f'No relationship found between {self.table_name} and {other.table_name}.')
+
+    def __add__(self, other: SQLObject):
+        query = self.copy()
         if query.table_name.lower() == other.table_name.lower():
             for key in USUAL_KEYS:
                 query.update_values(key, other.values.get(key, []))
@@ -1488,7 +1494,7 @@ class Select(SQLObject):
                     PrimaryKey.add(primary_key, query)
                 query.add(foreign_field, other)
                 return other
-            raise ValueError(f'No relationship found between {query.table_name} and {other.table_name}.')
+            self.no_relation_error(other) # === raise ERROR ...  ===
         elif primary_key:
             PrimaryKey.add(primary_key, other)
         other.add(foreign_field, query)
@@ -1508,6 +1514,22 @@ class Select(SQLObject):
             if self.diff(key, other.values.get(key, []), True):
                 return False
         return True
+    
+    def __sub__(self, other: SQLObject) -> SQLObject:        
+        fk_field, primary_k = ForeignKey.find(self, other)
+        if fk_field:
+            query = self.copy()
+            other = other.copy()
+        else:
+            fk_field, primary_k = ForeignKey.find(other, self)
+            if not fk_field:
+                self.no_relation_error(other) # === raise ERROR ...  ===
+            query = other.copy()
+            other = self.copy()
+        query.__class__ = NotSelectIN
+        Field.add(fk_field, query)
+        query.add(primary_k, other)
+        return other
 
     def limit(self, row_count: int=100, offset: int=0):
         if Function.dialect == Dialect.SQL_SERVER:
@@ -1800,29 +1822,3 @@ def detect(text: str, join_queries: bool = True, format: str='') -> Select | lis
     return result
 # ===========================================================================================//
 
-
-if __name__ == "__main__":
-    query = Select(
-        'Matricula M',
-        aluno_id=Select(
-            'Aluno A',
-            nome=NamedField('nome_aluno'),
-            id=PrimaryKey
-        ),
-        curso=Select(
-            'Curso C',
-            nome=NamedField('nome_curso'),
-            id=PrimaryKey
-        )
-    )
-    print('='*50)
-    print(query)
-    print('-'*50)
-    m, c, a = Select.parse( str(query) )
-    m(inicio=[Not.gt('2024-11-15'), Field])
-    query = m + a
-    print(query)
-    print('-'*50)
-    query.optimize()
-    print(query)
-    print('='*50)

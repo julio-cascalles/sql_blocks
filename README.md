@@ -301,6 +301,30 @@ m = Select...
 
 
 ---
+**8.3 Difference between queries**
+```
+    STATUS_DELIVERED_OK = 93
+    orders = Select('orders',
+        customer_id=ForeignKey('customers'),
+        status=eq(STATUS_DELIVERED_OK)
+    )
+    customers = Select('customers'
+        id=PrimaryKey, name=Field
+    )
+    gap = orders - customers
+```
+return _customers without orders_:
+
+    SELECT
+            c.name
+    FROM
+            customers c
+    WHERE
+            NOT c.id IN (
+                SELECT o.customer_id FROM orders o
+                WHERE o.status = 93
+            )
+---
 
 ### 9 - Comparing objects
 

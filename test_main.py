@@ -25,7 +25,8 @@ from tests.special_cases import (
     script_from_neo4j_query, script_mongo_from,
     neo4j_with_WHERE, query_for_WHERE_neo4j, 
     group_cypher, cypher_group, detected_parser_classes,
-    compare_join_condition, tables_without_JOIN
+    compare_join_condition, tables_without_JOIN,
+    customers_without_orders
 )
 from tests.functions import (
     diff_over_sum, function_fields,
@@ -247,3 +248,10 @@ def test_nested_functions():
 def test_auto_convert_func():
     obj = create_auto_convert_function()
     assert compare_auto_convert_text(obj)
+
+def test_query_diff():
+    q1, q2 = [
+        customers_without_orders(val)
+        for val in (True, False)
+    ]
+    assert q1 == q2
