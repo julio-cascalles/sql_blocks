@@ -257,3 +257,30 @@ def customers_without_orders(subtract: bool) -> Select:
             TABLE_ORDERS, customer_id=Field, status=eq(STATUS_DELIVERED_OK)
         )
     )
+
+def range_conditions() -> list:
+    query = Select(
+        'People p',
+        age_group=Range('age',{
+            'adult': 50,
+            'teenager': 17,
+            'child': 10,
+            'elderly': 70,
+            'young': 21,
+        })
+    )
+    return re.findall(r"BETWEEN \d+ AND \d+ THEN '\w+'", str(query))
+
+
+SQLINJECTION_FALSE_POSITIVES =[
+    'world','major','north','order','short',
+    'force','story','worth','floor','store'
+]
+SQLINJECTION_REAL_ATTEMPT = "AAA'OR 1=1"
+
+def is_sql_injection(value: str) -> bool:
+    try:
+        quoted(value)
+    except PermissionError as e:
+        return True
+    return False

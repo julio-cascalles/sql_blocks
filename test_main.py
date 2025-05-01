@@ -26,7 +26,9 @@ from tests.special_cases import (
     neo4j_with_WHERE, query_for_WHERE_neo4j, 
     group_cypher, cypher_group, detected_parser_classes,
     compare_join_condition, tables_without_JOIN,
-    customers_without_orders
+    customers_without_orders, range_conditions,
+    SQLINJECTION_FALSE_POSITIVES, SQLINJECTION_REAL_ATTEMPT,
+    is_sql_injection
 )
 from tests.functions import (
     diff_over_sum, function_fields,
@@ -255,3 +257,20 @@ def test_query_diff():
         for val in (True, False)
     ]
     assert q1 == q2
+
+def test_range_conditions():
+    range_list = [
+        "BETWEEN 0 AND 10 THEN 'child'",
+        "BETWEEN 11 AND 17 THEN 'teenager'",
+        "BETWEEN 18 AND 21 THEN 'young'",
+        "BETWEEN 22 AND 50 THEN 'adult'",
+        "BETWEEN 51 AND 70 THEN 'elderly'",
+    ]
+    assert range_conditions() == range_list
+
+def test_false_sql_injection():
+    for word in SQLINJECTION_FALSE_POSITIVES:
+        assert not is_sql_injection(word)
+
+def test_real_sql_injection():
+    is_sql_injection(SQLINJECTION_REAL_ATTEMPT)

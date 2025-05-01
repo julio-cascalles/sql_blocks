@@ -510,14 +510,16 @@ class ForeignKey:
 
 def quoted(value) -> str:
     if isinstance(value, str):
+        if re.search(r'\bor\b', value, re.IGNORECASE):
+            raise PermissionError('Possible SQL injection attempt')
         value = f"'{value}'"
     return str(value)
 
 
 class Position(Enum):
+    StartsWith = -1
     Middle = 0
-    StartsWith = 1
-    EndsWith = 2
+    EndsWith = 1
 
 
 class Where:
@@ -535,7 +537,9 @@ class Where:
         return cls.__constructor('=', value)
 
     @classmethod
-    def contains(cls, text: str, pos: Position = Position.Middle):
+    def contains(cls, text: str, pos: int | Position = Position.Middle):
+        if isinstance(pos, int):
+            pos = Position(pos)
         return cls(
             "LIKE '{}{}{}'".format(
                 '%' if pos != Position.StartsWith else '',
@@ -652,7 +656,7 @@ class Case:
             '\n'.join(
                 f'\t\tWHEN {field} {cond.content} THEN {res}'
                 for res, cond in self.__conditions.items()
-            ) + f'\n\t\tELSE {default}' if default else '',
+            ) + (f'\n\t\tELSE {default}' if default else ''),
             name
         )
         main.values.setdefault(SELECT, []).append(name)
@@ -677,14 +681,23 @@ class Options:
 
 
 class Between:
+    is_literal: bool = False
+
     def __init__(self, start, end):
         if start > end:
             start, end = end, start
         self.start = start
         self.end = end
 
+    def literal(self) -> Where:
+        return Where('BETWEEN {} AND {}'.format(
+            self.start, self.end
+        ))
+
     def add(self, name: str, main:SQLObject):
-        Where.gte(self.start).add(name, main),
+        if self.is_literal:
+            return self.literal().add(name, main)
+        Where.gte(self.start).add(name, main)
         Where.lte(self.end).add(name, main)
 
 class SameDay(Between):
@@ -694,6 +707,19 @@ class SameDay(Between):
             f'{date} 23:59:59',
         )
 
+
+class Range(Case):
+    INC_FUNCTION = lambda x: x + 1
+
+    def __init__(self, field: str, values: dict):
+        super().__init__(field)
+        start = 0
+        cls = self.__class__
+        for label, value in sorted(values.items(), key=lambda item: item[1]):
+            self.when(
+                Between(start, value).literal(), label
+            )
+            start = cls.INC_FUNCTION(value)
 
 
 class Clause:
@@ -1440,7 +1466,6 @@ class MongoParser(Parser):
 
 class Select(SQLObject):
     join_type: JoinType = JoinType.INNER
-    REGEX = {}
     EQUIVALENT_NAMES = {}
 
     def __init__(self, table_name: str='', **values):
@@ -1821,4 +1846,3 @@ def detect(text: str, join_queries: bool = True, format: str='') -> Select | lis
         result += query
     return result
 # ===========================================================================================//
-

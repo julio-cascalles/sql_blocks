@@ -1,5 +1,9 @@
 # SQL_Blocks
 
+## _SQL_Blocks_ is useful for building complex SQL commands through smaller query blocks:
+
+---
+
 ### 1 - You can assemble a simple object that will then be converted into an SQL command:
 
 > a = Select('Actor') # --> SELECT * FROM Actor act
@@ -396,6 +400,31 @@ m2 = Select(
         )
     )
 
+10.1 - If the labels used in the CASE are based on ranges of values ​​in sequence, you can use the **Range class**:
+
+        query = Select(
+            'People p',
+            age_group=Range('age',{  # <<---------- 
+                'adult': 50,
+                'teenager': 17,
+                'child': 10,
+                'elderly': 70,
+                'young': 21,
+            })
+        )
+is equivalent to...
+```
+        SELECT
+                CASE
+                    WHEN p.age BETWEEN 0 AND 10 THEN 'child'
+                    WHEN p.age BETWEEN 11 AND 17 THEN 'teenager'
+                    WHEN p.age BETWEEN 18 AND 21 THEN 'young'
+                    WHEN p.age BETWEEN 22 AND 50 THEN 'adult'
+                    WHEN p.age BETWEEN 51 AND 70 THEN 'elderly'
+                END AS age_group
+        FROM
+                People p
+```
 ---
 
 ### 11 - optimize method
