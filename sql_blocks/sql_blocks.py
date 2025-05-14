@@ -99,10 +99,11 @@ class SQLObject:
             for fld in source:
                 result += re.split(r'([=()]|<>|\s+ON\s+|\s+on\s+)', fld)
             return result
-        def cleanup(fld: str) -> str:
+        def cleanup(text: str) -> str:
+            text = re.sub(r'[\n\t]', ' ', text)
             if exact:
-                fld = fld.lower()
-            return fld.strip()
+                text = text.lower()
+            return text.strip()
         def field_set(source: list) -> set:
             return set(
                 (
@@ -597,10 +598,11 @@ class Where:
         main.values[FROM].append(f',{query.table_name} {query.alias}')
         for key in USUAL_KEYS:
             main.update_values(key, query.values.get(key, []))
-        main.values.setdefault(WHERE, []).append('({a1}.{f1} = {a2}.{f2})'.format(
-            a1=main.alias, f1=name,
-            a2=query.alias, f2=query.key_field
-        ))
+        if query.key_field:
+            main.values.setdefault(WHERE, []).append('({a1}.{f1} = {a2}.{f2})'.format(
+                a1=main.alias, f1=name,
+                a2=query.alias, f2=query.key_field
+            ))
 
     def add(self, name: str, main: SQLObject):
         func_type = FUNCTION_CLASS.get(name.lower())
@@ -667,16 +669,14 @@ class Options:
         self.__children: dict = values
 
     def add(self, logical_separator: str, main: SQLObject):
-        if logical_separator not in ('AND', 'OR'):
+        if logical_separator.upper() not in ('AND', 'OR'):
             raise ValueError('`logical_separator` must be AND or OR')
-        conditions: list[str] = []
+        temp = Select(f'{main.table_name} {main.alias}')
         child: Where
         for field, child in self.__children.items():
-            conditions.append(' {} {} '.format(
-                Field.format(field, main), child.content
-            ))
+            child.add(field, temp)
         main.values.setdefault(WHERE, []).append(
-            '(' + logical_separator.join(conditions) + ')'
+            '(' + f'\n\t{logical_separator} '.join(temp.values[WHERE]) + ')'
         )
 
 
@@ -836,8 +836,16 @@ class QueryLanguage:
     has_default = {key: bool(key == SELECT) for key in KEYWORD}
 
     @staticmethod
-    def remove_alias(fld: str) -> str:
-        return ''.join(re.split(r'\w+[.]', fld))
+    def remove_alias(text: str) -> str:
+        value, sep = '', ''
+        text = re.sub('[\n\t]', ' ', text)
+        if ':' in text:
+            text, value = text.split(':', maxsplit=1)
+            sep = ':'
+        return '{}{}{}'.format(
+            ''.join(re.split(r'\w+[.]', text)),
+            sep, value.replace("'", '"')
+        )
 
     def join_with_tabs(self, values: list, sep: str='') -> str:
         sep = sep + self.TABULATION
@@ -905,7 +913,8 @@ class MongoDBLanguage(QueryLanguage):
     LOGICAL_OP_TO_MONGO_FUNC = {
         '>': '$gt',  '>=': '$gte',
         '<': '$lt',  '<=': '$lte',
-        '=': '$eq',  '<>': '$ne',
+        '=': '$eq',  '<>': '$ne', 
+        'like': '$regex', 'LIKE': '$regex',
     }
     OPERATORS = '|'.join(op for op in LOGICAL_OP_TO_MONGO_FUNC)
     REGEX = {
@@ -958,7 +967,7 @@ class MongoDBLanguage(QueryLanguage):
             field, *op, const = tokens
             op = ''.join(op)
             expr = '{begin}{op}:{const}{end}'.format(
-                begin='{', const=const, end='}',
+                begin='{', const=const.replace('%', '.*'), end='}',
                 op=cls.LOGICAL_OP_TO_MONGO_FUNC[op],                
             )
             where_list.append(f'{field}:{expr}')
@@ -1065,6 +1074,55 @@ class Neo4JLanguage(QueryLanguage):
         if default_prefix:
             return super().prefix(key)
         return ''
+
+
+class DatabricksLanguage(QueryLanguage):
+    pattern = '{_from}{where}{group_by}{order_by}{select}{limit}'
+    has_default = {key: bool(key == SELECT) for key in KEYWORD}
+
+    def __init__(self, target: 'Select'):
+        super().__init__(target)
+        self.aggregation_fields = []
+
+    def add_field(self, values: list) -> str:
+        AGG_FUNCS = '|'.join(cls.__name__ for cls in Aggregate.__subclasses__())
+        # --------------------------------------------------------------
+        def is_agg_field(fld: str) -> bool:
+            return re.findall(fr'({AGG_FUNCS})[(]', fld, re.IGNORECASE)
+        # --------------------------------------------------------------
+        new_values = []
+        for val in values:
+            if is_agg_field(val):
+                self.aggregation_fields.append(val)
+            else:
+                new_values.append(val)
+        values = new_values        
+        return super().add_field(values)
+
+    def prefix(self, key: str) -> str:
+        def get_aggregate() -> str:
+            return 'AGGREGATE {} '.format(
+                ','.join(self.aggregation_fields)
+            ) 
+        return '{}{}{}{}{}'.format(
+            '|> ' if key != FROM else '',
+            self.LINE_BREAK,
+            get_aggregate() if key == GROUP_BY else '',
+            key, self.TABULATION
+        )
+
+    # def get_tables(self, values: list) -> str:
+    #     return  self.join_with_tabs(values)
+
+    # def extract_conditions(self, values: list) -> str:
+    #     return  self.join_with_tabs(values, ' AND ')
+
+    # def sort_by(self, values: list) -> str:
+    #     return self.join_with_tabs(values, ',')
+
+    def set_group(self, values: list) -> str:
+        return  self.join_with_tabs(values, ',')
+
 
 
 class Parser:
@@ -1422,7 +1480,18 @@ class MongoParser(Parser):
 
     def begin_conditions(self, value: str):
         self.where_list = {}
+        self.field_method = self.first_ORfield
         return Where
+    
+    def first_ORfield(self, text: str):
+        if text.startswith('$'):
+            return
+        found = re.search(r'\w+[:]', text)
+        if not found:
+            return
+        self.field_method = None
+        p1, p2 = found.span()
+        self.last_field = text[p1: p2-1]
 
     def increment_brackets(self, value: str):
         self.brackets[value] += 1
@@ -1431,6 +1500,7 @@ class MongoParser(Parser):
         self.method = self.new_query
         self.last_field = ''
         self.where_list = None
+        self.field_method = None
         self.PARAM_BY_FUNCTION = {
             'find': Where, 'aggregate': GroupBy, 'sort': OrderBy
         }
@@ -1460,6 +1530,8 @@ class MongoParser(Parser):
                 self.close_brackets(
                     BRACKET_PAIR[token]
                 )
+            elif self.field_method:
+                self.field_method(token)
             self.method = self.TOKEN_METHODS.get(token)
 # ----------------------------
 
@@ -1846,3 +1918,50 @@ def detect(text: str, join_queries: bool = True, format: str='') -> Select | lis
         result += query
     return result
 # ===========================================================================================//
+
+
+if __name__ == "__main__":
+    # def identifica_suspeitos() -> Select:
+    #     """Mostra quais pessoas tem caracteríosticas iguais à descrição do suspeito"""
+    #     Select.join_type = JoinType.LEFT
+    #     return Select(
+    #         'Suspeito s', id=Field,
+    #         _=Where.join( 
+    #             Select('Pessoa p',
+    #                 OR=Options(
+    #                     pessoa=Where('= s.id'),
+    #                     altura=Where.formula('ABS(% - s.{f}) < 0.5'),
+    #                     peso=Where.formula('ABS(% - s.{f}) < 0.5'),
+    #                     cabelo=Where.formula('% = s.{f}'),
+    #                     olhos=Where.formula('% = s.{f}'),
+    #                     sexo=Where.formula('% = s.{f}'),
+    #                 ), 
+    #                 nome=Field
+    #             )
+    #         )
+    #     )
+    # query = identifica_suspeitos()
+    # print('='*50)
+    # print(query)
+    # print('-'*50)
+    script = '''
+    db.people.find({
+            {
+                $or: [
+                    status:{$eq:"B"},
+                    age:{$lt:50}
+                ]
+            },
+            age:{$gte:18},  status:{$eq:"A"}
+    },{
+            name: 1, user_id: 1
+    }).sort({
+    '''
+    print('='*50)
+    q1 = Select.parse(script, MongoParser)[0]
+    print(q1)
+    print('-'*50)
+    q2 = q1.translate_to(MongoDBLanguage)
+    print(q2)
+    # print('-'*50)
+    print('='*50)
