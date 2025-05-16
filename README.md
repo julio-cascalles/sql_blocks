@@ -637,10 +637,12 @@ Automatically assigns aliases to each side of the relationship (In this example,
 
 ---
 ### `translate_to` method
-It consists of the inverse process of parsing: From a Select object, it returns the text to a script in any of the languages ​​below:
+From a Select object, it returns the text to a script in any of the languages ​​below:
 * QueryLanguage - default
 * MongoDBLanguage
 * Neo4JLanguage
+* DatabricksLanguage
+* PandasLanguage
 
 ---
 ### 14 - Window Function

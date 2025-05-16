@@ -38,10 +38,8 @@ class SQLObject:
         self.key_field = ''
         self.set_table(table_name)
 
-    def set_table(self, table_name: str):
-        if not table_name:
-            return
-        cls = SQLObject
+    @classmethod
+    def split_alias(cls, table_name: str) -> tuple:
         is_file_name = any([
             '/' in table_name, '.' in table_name
         ])
@@ -49,16 +47,21 @@ class SQLObject:
         if is_file_name:
             ref = table_name.split('/')[-1].split('.')[0]
         if cls.ALIAS_FUNC:
-            self.__alias = cls.ALIAS_FUNC(ref)
+            return cls.ALIAS_FUNC(ref), table_name
         elif ' ' in table_name.strip():
-            table_name, self.__alias = table_name.split()
+            table_name, alias = table_name.split()
+            return alias, table_name
         elif '_' in ref:
-            self.__alias = ''.join(
+            return ''.join(
                 word[0].lower()
                 for word in ref.split('_')
-            )
-        else:
-            self.__alias = ref.lower()[:3]
+            ), table_name
+        return ref.lower()[:3], table_name
+
+    def set_table(self, table_name: str):
+        if not table_name:
+            return
+        self.__alias, table_name = self.split_alias(table_name)
         self.values.setdefault(FROM, []).append(f'{table_name} {self.alias}')
 
     @property
@@ -777,6 +780,20 @@ class OrderBy(Clause):
         name = cls.format(name, main)
         main.values.setdefault(ORDER_BY, []).append(name+cls.sort.value)
 
+    @staticmethod
+    def ascending(value: str) -> bool:
+        if re.findall(r'\s+(DESC)\s*$', value):
+            return False
+        return True
+
+    @classmethod
+    def format(cls, name: str, main: SQLObject) -> str:
+        if cls.ascending(name):
+            cls.sort = SortType.ASC
+        else:
+            cls.sort = SortType.DESC
+        return super().format(name, main)
+
     @classmethod
     def cls_to_str(cls) -> str:
         return ORDER_BY
@@ -863,6 +880,8 @@ class QueryLanguage:
         return  self.join_with_tabs(values, ' AND ')
 
     def sort_by(self, values: list) -> str:
+        if OrderBy.sort == SortType.DESC:
+            values[-1] += ' DESC'
         return self.join_with_tabs(values, ',')
 
     def set_group(self, values: list) -> str:
@@ -1076,28 +1095,35 @@ class Neo4JLanguage(QueryLanguage):
         return ''
 
 
-class DatabricksLanguage(QueryLanguage):
-    pattern = '{_from}{where}{group_by}{order_by}{select}{limit}'
-    has_default = {key: bool(key == SELECT) for key in KEYWORD}
-
+class DataAnalysisLanguage(QueryLanguage):
     def __init__(self, target: 'Select'):
         super().__init__(target)
         self.aggregation_fields = []
 
-    def add_field(self, values: list) -> str:
-        AGG_FUNCS = '|'.join(cls.__name__ for cls in Aggregate.__subclasses__())
-        # --------------------------------------------------------------
-        def is_agg_field(fld: str) -> bool:
-            return re.findall(fr'({AGG_FUNCS})[(]', fld, re.IGNORECASE)
-        # --------------------------------------------------------------
-        new_values = []
-        for val in values:
-            if is_agg_field(val):
-                self.aggregation_fields.append(val)
+    def split_agg_fields(self, values: list) -> list:
+        AGG_FUNC_REGEX = re.compile(
+            r'({})[(]'.format(
+                '|'.join(cls.__name__ for cls in Aggregate.__subclasses__())
+            ),
+            re.IGNORECASE
+        )
+        common_fields = []
+        for field in values:
+            field = self.remove_alias(field)
+            if AGG_FUNC_REGEX.findall(field):
+                self.aggregation_fields.append(field)
             else:
-                new_values.append(val)
-        values = new_values        
-        return super().add_field(values)
+                common_fields.append(field)
+        return common_fields
+
+class DatabricksLanguage(DataAnalysisLanguage):
+    pattern = '{_from}{where}{group_by}{order_by}{select}{limit}'
+    has_default = {key: bool(key == SELECT) for key in KEYWORD}
+
+    def add_field(self, values: list) -> str:
+        return super().add_field(
+            self.split_agg_fields(values)
+        )
 
     def prefix(self, key: str) -> str:
         def get_aggregate() -> str:
@@ -1105,24 +1131,111 @@ class DatabricksLanguage(QueryLanguage):
                 ','.join(self.aggregation_fields)
             ) 
         return '{}{}{}{}{}'.format(
-            '|> ' if key != FROM else '',
             self.LINE_BREAK,
+            '|> ' if key != FROM else '',
             get_aggregate() if key == GROUP_BY else '',
             key, self.TABULATION
         )
 
-    # def get_tables(self, values: list) -> str:
-    #     return  self.join_with_tabs(values)
 
-    # def extract_conditions(self, values: list) -> str:
-    #     return  self.join_with_tabs(values, ' AND ')
+class PandasLanguage(DataAnalysisLanguage):
+    pattern = '{_from}{where}{select}{group_by}{order_by}'
+    has_default = {key: False for key in KEYWORD}
 
-    # def sort_by(self, values: list) -> str:
-    #     return self.join_with_tabs(values, ',')
+    def add_field(self, values: list) -> str:
+        def line_field_fmt(field: str) -> str:
+            return "{}'{}'".format(
+                self.TABULATION, field
+            )
+        common_fields = self.split_agg_fields(values)
+        if common_fields:
+            return '[[\n{}\n]]'.format(
+                ','.join(line_field_fmt(fld) for fld in common_fields)
+            )
+        return ''
+
+    def get_tables(self, values: list) -> str:
+        result = 'import pandas as pd'
+        names = {}
+        for table in values:
+            table, *join = [t.strip() for t in re.split('JOIN|LEFT|RIGHT|ON', table) if t.strip()]
+            alias, table = SQLObject.split_alias(table)
+            result += f"\ndf_{table} = pd.read_csv('{table}.csv')"
+            names[alias] = table
+            if join:
+                a1, f1, a2, f2 = [r.strip() for r in re.split('[().=]', join[-1]) if r]
+                result += "\n\ndf_{} = pd.merge(\n\tdf_{}, df_{}, left_on='{}', right_on='{}', how='{}'\n)\n".format(
+                    last_table, names[a1], names[a2], f1, f2, 'inner'
+                )
+            last_table = table
+        _, table = SQLObject.split_alias(values[0])
+        result += f'\ndf = df_{table}\n\ndf = df\n'
+        return result
+
+    def extract_conditions(self, values: list) -> str:
+        conditions = []
+        STR_FUNC = {
+            1: '.str.startswith(',
+            2: '.str.endswith(',
+            3: '.str.contains(',
+        }
+        for expr in values:
+            expr = self.remove_alias(expr)
+            field, op, *const = [t for t in re.split(r'(\w+)', expr) if t.strip()]
+            if op.upper() == 'LIKE' and len(const) == 3:
+                level = 0
+                if '%' in const[0]:
+                    level += 2
+                if '%' in const[2]:
+                    level += 1
+                const = f"'{const[1]}'"
+                op = STR_FUNC[level]
+            else:
+                const = ''.join(const)
+            conditions.append(
+                f"(df['{field}']{op}{const})"
+            )
+        if not conditions:
+            return ''
+        return '[\n{}\n]'.format(
+            '&'.join(f'\t{c}' for c in conditions),
+        )
+    
+    def clean_values(self, values: list) -> str:
+        for i in range(len(values)):
+            content = self.remove_alias(values[i])
+            values[i] = f"'{content}'"
+        return ','.join(values)
+
+    def sort_by(self, values: list) -> str:
+        if not values:
+            return ''
+        return '.sort_values(\n{},\n\tascending = {}\n)'.format(
+            '\t'+self.clean_values(values), OrderBy.ascending(values[-1])
+        )
 
     def set_group(self, values: list) -> str:
-        return  self.join_with_tabs(values, ',')
+        result = '.groupby([\n\t{}\n])'.format(
+            self.clean_values(values)
+        )
+        if self.aggregation_fields:            
+            PANDAS_AGG_FUNC = {'Avg': 'mean', 'Count': 'size'}
+            result += '.agg({'
+            for field in self.aggregation_fields:
+                func, field, *alias = re.split('[()]', field) # [To-Do: Use `alias`]
+                result += "{}'{}': ['{}']".format(
+                    self.TABULATION, field,
+                    PANDAS_AGG_FUNC.get(func, func)
+                )
+            result += '\n})'
+        return result
+    
+    def __init__(self, target: 'Select'):
+        super().__init__(target)
+        self.result['function'] = 'find'
 
+    def prefix(self, key: str):
+        return ''
 
 
 class Parser:
@@ -1539,6 +1652,7 @@ class MongoParser(Parser):
 class Select(SQLObject):
     join_type: JoinType = JoinType.INNER
     EQUIVALENT_NAMES = {}
+    DefaultLanguage = QueryLanguage
 
     def __init__(self, table_name: str='', **values):
         super().__init__(table_name)
@@ -1598,7 +1712,7 @@ class Select(SQLObject):
         return query
 
     def __str__(self) -> str:
-        return self.translate_to(QueryLanguage)
+        return self.translate_to(self.DefaultLanguage)
    
     def __call__(self, **values):
         for name, params in values.items():
@@ -1921,47 +2035,24 @@ def detect(text: str, join_queries: bool = True, format: str='') -> Select | lis
 
 
 if __name__ == "__main__":
-    # def identifica_suspeitos() -> Select:
-    #     """Mostra quais pessoas tem caracteríosticas iguais à descrição do suspeito"""
-    #     Select.join_type = JoinType.LEFT
-    #     return Select(
-    #         'Suspeito s', id=Field,
-    #         _=Where.join( 
-    #             Select('Pessoa p',
-    #                 OR=Options(
-    #                     pessoa=Where('= s.id'),
-    #                     altura=Where.formula('ABS(% - s.{f}) < 0.5'),
-    #                     peso=Where.formula('ABS(% - s.{f}) < 0.5'),
-    #                     cabelo=Where.formula('% = s.{f}'),
-    #                     olhos=Where.formula('% = s.{f}'),
-    #                     sexo=Where.formula('% = s.{f}'),
-    #                 ), 
-    #                 nome=Field
-    #             )
-    #         )
-    #     )
-    # query = identifica_suspeitos()
-    # print('='*50)
-    # print(query)
-    # print('-'*50)
-    script = '''
-    db.people.find({
-            {
-                $or: [
-                    status:{$eq:"B"},
-                    age:{$lt:50}
-                ]
-            },
-            age:{$gte:18},  status:{$eq:"A"}
-    },{
-            name: 1, user_id: 1
-    }).sort({
-    '''
+    query = detect('''
+        SELECT
+            e.gender, d.region,
+            Avg(e.age)
+        FROM
+            Employees e
+            LEFT JOIN Department d ON (e.depto_id = d.id)
+        WHERE
+            e.name LIKE 'C%'
+        GROUP BY
+            e.gender, d.region
+        ORDER BY
+            d.region DESC
+    ''')
     print('='*50)
-    q1 = Select.parse(script, MongoParser)[0]
-    print(q1)
+    print(query)
     print('-'*50)
-    q2 = q1.translate_to(MongoDBLanguage)
-    print(q2)
-    # print('-'*50)
+    # Select.DefaultLanguage = DatabricksLanguage
+    Select.DefaultLanguage = PandasLanguage
+    print(query)
     print('='*50)
