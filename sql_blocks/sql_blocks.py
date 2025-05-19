@@ -880,7 +880,7 @@ class QueryLanguage:
         return  self.join_with_tabs(values, ' AND ')
 
     def sort_by(self, values: list) -> str:
-        if OrderBy.sort == SortType.DESC:
+        if OrderBy.sort == SortType.DESC and OrderBy.ascending(values[-1]):
             values[-1] += ' DESC'
         return self.join_with_tabs(values, ',')
 
@@ -1138,9 +1138,16 @@ class DatabricksLanguage(DataAnalysisLanguage):
         )
 
 
+class FileExtension(Enum):
+    CSV = 'read_csv'
+    XLSX = 'read_excel'
+    JSON = 'read_json'
+    HTML = 'read_html'
+
 class PandasLanguage(DataAnalysisLanguage):
     pattern = '{_from}{where}{select}{group_by}{order_by}'
     has_default = {key: False for key in KEYWORD}
+    file_extension = FileExtension.CSV
 
     def add_field(self, values: list) -> str:
         def line_field_fmt(field: str) -> str:
@@ -1149,7 +1156,7 @@ class PandasLanguage(DataAnalysisLanguage):
             )
         common_fields = self.split_agg_fields(values)
         if common_fields:
-            return '[[\n{}\n]]'.format(
+            return '[[{}\n]]'.format(
                 ','.join(line_field_fmt(fld) for fld in common_fields)
             )
         return ''
@@ -1160,7 +1167,9 @@ class PandasLanguage(DataAnalysisLanguage):
         for table in values:
             table, *join = [t.strip() for t in re.split('JOIN|LEFT|RIGHT|ON', table) if t.strip()]
             alias, table = SQLObject.split_alias(table)
-            result += f"\ndf_{table} = pd.read_csv('{table}.csv')"
+            result += "\ndf_{table} = pd.{func}('{table}.{ext}')".format(
+                table=table, func=self.file_extension.value, ext=self.file_extension.name.lower()
+            )
             names[alias] = table
             if join:
                 a1, f1, a2, f2 = [r.strip() for r in re.split('[().=]', join[-1]) if r]
@@ -1188,7 +1197,7 @@ class PandasLanguage(DataAnalysisLanguage):
                     level += 2
                 if '%' in const[2]:
                     level += 1
-                const = f"'{const[1]}'"
+                const = f"'{const[1]}')"
                 op = STR_FUNC[level]
             else:
                 const = ''.join(const)
@@ -2035,24 +2044,19 @@ def detect(text: str, join_queries: bool = True, format: str='') -> Select | lis
 
 
 if __name__ == "__main__":
-    query = detect('''
+    query = detect("""
         SELECT
             e.gender, d.region,
             Avg(e.age)
         FROM
             Employees e
-            LEFT JOIN Department d ON (e.depto_id = d.id)
+            JOIN Departments d ON (e.depto_id = d.id)
         WHERE
-            e.name LIKE 'C%'
+            e.name LIKE 'A%'
         GROUP BY
             e.gender, d.region
         ORDER BY
             d.region DESC
-    ''')
-    print('='*50)
-    print(query)
-    print('-'*50)
-    # Select.DefaultLanguage = DatabricksLanguage
-    Select.DefaultLanguage = PandasLanguage
-    print(query)
-    print('='*50)
+    """)
+    PandasLanguage.file_extension = FileExtension.XLSX
+    print( query.translate_to(PandasLanguage) )
