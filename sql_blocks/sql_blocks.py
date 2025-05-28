@@ -131,6 +131,7 @@ class SQLObject:
         return s1 - s2
 
     def delete(self, search: str, keys: list=USUAL_KEYS, exact: bool=False):
+        search = re.escape(search)
         if exact:
             not_match = lambda item: not re.search(fr'\w*[.]*{search}$', item)
         else:
@@ -1437,7 +1438,11 @@ class CypherParser(Parser):
                     raise ValueError(f'Unknown function `{func_name}`.')
                 if ':' in token:
                     token, field_alias = token.split(':')
-                    class_type = class_type().As(field_alias)
+                    if extra_classes == [OrderBy]:
+                        class_type = class_type().As(field_alias, OrderBy)
+                        extra_classes = []
+                    else:
+                        class_type = class_type().As(field_alias)
                 class_list = [class_type]
         class_list += extra_classes
         FieldList(token, class_list).add('', self.queries[-1])
@@ -2044,19 +2049,8 @@ def detect(text: str, join_queries: bool = True, format: str='') -> Select | lis
 
 
 if __name__ == "__main__":
+    SQLObject.ALIAS_FUNC = lambda t: t[0].lower()
     query = detect("""
-        SELECT
-            e.gender, d.region,
-            Avg(e.age)
-        FROM
-            Employees e
-            JOIN Departments d ON (e.depto_id = d.id)
-        WHERE
-            e.name LIKE 'A%'
-        GROUP BY
-            e.gender, d.region
-        ORDER BY
-            d.region DESC
+        dev@nome(nome, id)<-cafe(dev_id?horario >= '08:00'^avg$consumo_mg_cafeina:media_cafeina)
     """)
-    PandasLanguage.file_extension = FileExtension.XLSX
-    print( query.translate_to(PandasLanguage) )
+    print(query)
