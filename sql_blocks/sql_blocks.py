@@ -103,10 +103,16 @@ class SQLObject:
                 result += re.split(r'([=()]|<>|\s+ON\s+|\s+on\s+)', fld)
             return result
         def cleanup(text: str) -> str:
+            if re.search(r'^CASE\b', text):
+                return text
             text = re.sub(r'[\n\t]', ' ', text)
             if exact:
                 text = text.lower()
             return text.strip()
+        def split_fields(text: str) -> list:
+            if key == SELECT:
+                return Case.parse(text)
+            return re.split(separator, text)
         def field_set(source: list) -> set:
             return set(
                 (
@@ -116,7 +122,7 @@ class SQLObject:
                     re.sub(pattern, '', cleanup(fld))
                 )
                 for string in disassemble(source)
-                for fld in re.split(separator, string)
+                for fld in split_fields(string)
             )       
         pattern = KEYWORD[key][1] 
         if exact:
@@ -642,11 +648,19 @@ class Case:
         self.__conditions = {}
         self.default = None
         self.field = field
+        self.current_condition = None
+        self.fields = []
 
-    def when(self, condition: Where, result):
+    def when(self, condition: Where, result=None):
+        self.current_condition = condition
+        if result is None:            
+            return self
+        return self.then(result)
+    
+    def then(self, result):
         if isinstance(result, str):
             result = quoted(result)
-        self.__conditions[result] = condition
+        self.__conditions[result] = self.current_condition
         return self
     
     def else_value(self, default):
@@ -655,17 +669,67 @@ class Case:
         self.default = default
         return self
     
-    def add(self, name: str, main: SQLObject):
-        field = Field.format(self.field, main)
+    def format(self, name: str, field: str='') -> str:
         default = self.default
-        name = 'CASE \n{}\n\tEND AS {}'.format(
+        if not field:
+            field = self.field
+        return 'CASE \n{}\n\tEND AS {}'.format(
             '\n'.join(
                 f'\t\tWHEN {field} {cond.content} THEN {res}'
                 for res, cond in self.__conditions.items()
             ) + (f'\n\t\tELSE {default}' if default else ''),
             name
         )
-        main.values.setdefault(SELECT, []).append(name)
+
+    def add(self, name: str, main: SQLObject):
+        main.values.setdefault(SELECT, []).append(
+            self.format(
+                name, Field.format(self.field, main)
+            )
+        )
+
+    @classmethod
+    def parse(cls, expr: str) -> list:
+        result = []
+        block: 'Case' = None        
+        # ---- functions of keywords: -----------------
+        def _when(word: str):
+            field, condition = word.split(' ', maxsplit=1)
+            condition = Where(condition)
+            if not block:
+                return cls(field).when(condition)
+            return block.when(condition)
+        def _then(word: str):
+            return block.then( eval(word) )
+        def _else(word: str):
+            return block.else_value( eval(word) )
+        def _end(word: str):
+            name, *rest = [t.strip() for t in re.split(r'\s+AS\s+|[,]', word) if t]
+            block.fields.append(
+                block.format(name)
+            )
+            block.fields += rest
+            return block
+        # -------------------------------------------------
+        KEYWORDS = {
+            'WHEN': _when, 'THEN': _then,
+            'ELSE': _else, 'END':  _end,
+        }
+        RESERVED_WORDS = ['CASE'] + list(KEYWORDS)
+        REGEX = '|'.join(fr'\b{word}\b' for word in RESERVED_WORDS)
+        expr = re.sub(r'\s+', ' ', expr)
+        tokens = [t for t in re.split(f'({REGEX})', expr) if t.strip()]
+        last_word = ''
+        while tokens:
+            word = tokens.pop(0)
+            if last_word in KEYWORDS:
+                block = KEYWORDS[last_word](word)
+                result += block.fields
+                block.fields = []
+            elif word not in RESERVED_WORDS:
+                result.append(word)
+            last_word = word
+        return result
 
 
 class Options:
@@ -2048,9 +2112,3 @@ def detect(text: str, join_queries: bool = True, format: str='') -> Select | lis
 # ===========================================================================================//
 
 
-if __name__ == "__main__":
-    SQLObject.ALIAS_FUNC = lambda t: t[0].lower()
-    query = detect("""
-        dev@nome(nome, id)<-cafe(dev_id?horario >= '08:00'^avg$consumo_mg_cafeina:media_cafeina)
-    """)
-    print(query)
