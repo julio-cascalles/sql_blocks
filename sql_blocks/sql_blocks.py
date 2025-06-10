@@ -85,6 +85,17 @@ class SQLObject:
         return KEYWORD[key][0].format(appendix.get(key, ''))
 
     @staticmethod
+    def contains_CASE_statement(text: str) -> bool:
+        return re.search(r'\bCASE\b', text, re.IGNORECASE)
+
+    @classmethod
+    def split_fields(cls, text: str, key: str) -> list:
+        if key == SELECT and cls.contains_CASE_statement(text):
+            return Case.parse(text)
+        separator = cls.get_separator(key)
+        return re.split(separator, text)
+
+    @staticmethod
     def is_named_field(fld: str, name: str='') -> bool:
         return re.search(fr'(\s+as\s+|\s+AS\s+){name}', fld)
 
@@ -103,16 +114,13 @@ class SQLObject:
                 result += re.split(r'([=()]|<>|\s+ON\s+|\s+on\s+)', fld)
             return result
         def cleanup(text: str) -> str:
-            if re.search(r'^CASE\b', text):
+            # if re.search(r'^CASE\b', text):
+            if self.contains_CASE_statement(text):
                 return text
             text = re.sub(r'[\n\t]', ' ', text)
             if exact:
                 text = text.lower()
             return text.strip()
-        def split_fields(text: str) -> list:
-            if key == SELECT:
-                return Case.parse(text)
-            return re.split(separator, text)
         def field_set(source: list) -> set:
             return set(
                 (
@@ -122,14 +130,13 @@ class SQLObject:
                     re.sub(pattern, '', cleanup(fld))
                 )
                 for string in disassemble(source)
-                for fld in split_fields(string)
+                for fld in self.split_fields(string, key)
             )       
         pattern = KEYWORD[key][1] 
         if exact:
             if key == WHERE:
                 pattern = r'["\']| '
             pattern += f'|{PATTERN_PREFIX}'
-        separator = self.get_separator(key)
         s1 = field_set(search_list)
         s2 = field_set(self.values.get(key, []))
         if exact:
@@ -727,7 +734,7 @@ class Case:
                 result += block.fields
                 block.fields = []
             elif word not in RESERVED_WORDS:
-                result.append(word)
+                result.append(word.replace(',', ''))
             last_word = word
         return result
 
@@ -1417,13 +1424,12 @@ class SQLParser(Parser):
                 for key in USUAL_KEYS:
                     if not key in values:
                         continue
-                    separator = self.class_type.get_separator(key)
                     cls = {
                         ORDER_BY: OrderBy, GROUP_BY: GroupBy
                     }.get(key, Field)
                     obj.values[key] = [
                         cls.format(fld, obj)
-                        for fld in re.split(separator, values[key])
+                        for fld in self.class_type.split_fields(values[key], key)
                         if (fld != '*' and len(tables) == 1) or obj.match(fld, key)
                     ]
                 result[obj.alias] = obj
@@ -2110,5 +2116,4 @@ def detect(text: str, join_queries: bool = True, format: str='') -> Select | lis
         result += query
     return result
 # ===========================================================================================//
-
 
