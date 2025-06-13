@@ -81,7 +81,9 @@ class SQLObject:
  
     @staticmethod
     def get_separator(key: str) -> str:
-        appendix = {WHERE: r'\s+and\s+|', FROM: r'\s+join\s+|\s+JOIN\s+'}
+        if key == WHERE:
+            return r'\s+and\s+|\s+AND\s+'
+        appendix = {FROM: r'\s+join\s+|\s+JOIN\s+'}
         return KEYWORD[key][0].format(appendix.get(key, ''))
 
     @staticmethod
@@ -92,6 +94,7 @@ class SQLObject:
     def split_fields(cls, text: str, key: str) -> list:
         if key == SELECT and cls.contains_CASE_statement(text):
             return Case.parse(text)
+        text = re.sub(r'\s+', ' ', text)
         separator = cls.get_separator(key)
         return re.split(separator, text)
 
@@ -1220,6 +1223,10 @@ class PandasLanguage(DataAnalysisLanguage):
     pattern = '{_from}{where}{select}{group_by}{order_by}'
     has_default = {key: False for key in KEYWORD}
     file_extension = FileExtension.CSV
+    HEADER_IMPORT_LIB  = ['import pandas as pd']
+    LIB_INITIALIZATION = ''
+    FIELD_LIST_FMT = '[[{}{}]]'
+    PREFIX_LIBRARY = 'pd.'
 
     def add_field(self, values: list) -> str:
         def line_field_fmt(field: str) -> str:
@@ -1228,30 +1235,43 @@ class PandasLanguage(DataAnalysisLanguage):
             )
         common_fields = self.split_agg_fields(values)
         if common_fields:
-            return '[[{}\n]]'.format(
-                ','.join(line_field_fmt(fld) for fld in common_fields)
+            return self.FIELD_LIST_FMT.format(
+                ','.join(line_field_fmt(fld) for fld in common_fields),
+                self.LINE_BREAK
             )
         return ''
 
+    def merge_tables(self, elements: list, main_table: str) -> str:
+        a1, f1, a2, f2 = elements
+        return "\n\ndf_{} = pd.merge(\n\tdf_{}, df_{}, left_on='{}', right_on='{}', how='{}'\n)\n".format(
+            main_table, self.names[a1], self.names[a2], f1, f2, 'inner'
+        )
+
     def get_tables(self, values: list) -> str:
-        result = 'import pandas as pd'
-        names = {}
+        result = '\n'.join(self.HEADER_IMPORT_LIB) + '\n'
+        if self.LIB_INITIALIZATION:
+            result += f'\n{self.LIB_INITIALIZATION}'
+        self.names = {}
         for table in values:
             table, *join = [t.strip() for t in re.split('JOIN|LEFT|RIGHT|ON', table) if t.strip()]
             alias, table = SQLObject.split_alias(table)
-            result += "\ndf_{table} = pd.{func}('{table}.{ext}')".format(
-                table=table, func=self.file_extension.value, ext=self.file_extension.name.lower()
+            result += "\ndf_{table} = {prefix}{func}('{table}.{ext}')".format(
+                prefix=self.PREFIX_LIBRARY, func=self.file_extension.value,
+                table=table, ext=self.file_extension.name.lower()
             )
-            names[alias] = table
+            self.names[alias] = table
             if join:
-                a1, f1, a2, f2 = [r.strip() for r in re.split('[().=]', join[-1]) if r]
-                result += "\n\ndf_{} = pd.merge(\n\tdf_{}, df_{}, left_on='{}', right_on='{}', how='{}'\n)\n".format(
-                    last_table, names[a1], names[a2], f1, f2, 'inner'
-                )
+                result += self.merge_tables([
+                    r.strip() for r in re.split('[().=]', join[-1]) if r
+                ], last_table)
             last_table = table
         _, table = SQLObject.split_alias(values[0])
-        result += f'\ndf = df_{table}\n\ndf = df\n'
+        result += f'\ndf = df_{table}\n\ndf = df'
         return result
+    
+    def split_condition_elements(self, expr: str) -> list:
+        expr = self.remove_alias(expr)
+        return [t for t in re.split(r'(\w+)', expr) if t.strip()]
 
     def extract_conditions(self, values: list) -> str:
         conditions = []
@@ -1261,8 +1281,7 @@ class PandasLanguage(DataAnalysisLanguage):
             3: '.str.contains(',
         }
         for expr in values:
-            expr = self.remove_alias(expr)
-            field, op, *const = [t for t in re.split(r'(\w+)', expr) if t.strip()]
+            field, op, *const = self.split_condition_elements(expr)
             if op.upper() == 'LIKE' and len(const) == 3:
                 level = 0
                 if '%' in const[0]:
@@ -1319,6 +1338,73 @@ class PandasLanguage(DataAnalysisLanguage):
         return ''
 
 
+class SparkLanguage(PandasLanguage):
+    HEADER_IMPORT_LIB = [
+        'from pyspark.sql import SparkSession',
+        'from pyspark.sql.functions import col, avg, sum, count'
+    ]
+    FIELD_LIST_FMT = '.select({}{})'
+    PREFIX_LIBRARY = 'pyspark.pandas.'
+
+    def merge_tables(self, elements: list, main_table: str) -> str:
+        a1, f1, a2, f2 = elements
+        COMMAND_FMT = """{cr}
+        df_{result} = df_{table1}.join(
+            {indent}df_{table2},
+            {indent}df_{table1}.{fk_field}{op}df_{table2}.{primary_key}{cr}
+        )
+        """
+        return re.sub(r'\s+', '', COMMAND_FMT).format(
+            result=main_table, cr=self.LINE_BREAK, indent=self.TABULATION,
+            table1=self.names[a1], table2=self.names[a2],
+            fk_field=f1, primary_key=f2, op=' == '
+        )
+
+    def extract_conditions(self, values: list) -> str:
+        conditions = []
+        for expr in values:
+            field, op, *const = self.split_condition_elements(expr)
+            const = ''.join(const)
+            if op.upper() == 'LIKE':
+                line = f"\n\t( col('{field}').like({const}) )"
+            else:
+                line = f"\n\t( col('{field}') {op} {const} )"
+            conditions.append(line)
+        if not conditions:
+            return ''
+        return '.filter({}\n)'.format(
+            '\n\t&'.join(conditions)
+        )
+
+    def sort_by(self, values: list) -> str:
+        if not values:
+            return ''
+        return '.orderBy({}{}{})'.format(
+            self.TABULATION,
+            self.clean_values(values),
+            self.LINE_BREAK
+        )
+
+    def set_group(self, values: list) -> str:
+        result = '.groupBy({}{}{})'.format(
+            self.TABULATION,
+            self.clean_values(values),
+            self.LINE_BREAK
+        )
+        if self.aggregation_fields:            
+            result += '.agg('
+            for field in self.aggregation_fields:
+                func, field, *alias = re.split(r'[()]|\s+as\s+|\s+AS\s+', field)
+                result += "{}{}('{}')".format(
+                    self.TABULATION, func.lower(), 
+                    field if field else '*'
+                )
+                if alias:
+                    result += f".alias('{alias[-1]}')"
+            result += '\n)'
+        return result
+
+
 class Parser:
     REGEX = {}
 
@@ -1366,7 +1452,7 @@ class SQLParser(Parser):
     def prepare(self):
         keywords = '|'.join(k + r'\b' for k in KEYWORD)
         flags = re.IGNORECASE + re.MULTILINE
-        self.REGEX['keywords'] = re.compile(f'({keywords}|[*])', flags)
+        self.REGEX['keywords'] = re.compile(f'({keywords})', flags)
         self.REGEX['subquery'] = re.compile(r'(\w\.)*\w+ +in +\(SELECT.*?\)', flags)
 
     def eval(self, txt: str):
@@ -2116,4 +2202,3 @@ def detect(text: str, join_queries: bool = True, format: str='') -> Select | lis
         result += query
     return result
 # ===========================================================================================//
-
