@@ -69,3 +69,49 @@ def compare_created_routes(obj: Recursive, join_airport: bool = False) -> bool:
         ){AIRPORT_TABLES if join_airport else SIMPLE_ROUTE_SELECT}
     """).lower()
     return SequenceMatcher(None, txt1, txt2).ratio() > 0.66
+
+def factory_result() -> str:
+    return  re.sub(r'\s+', ' ', str(
+        CTEFactory("""
+            SELECT u001.name, agg_sales.total
+            FROM (
+                SELECT * FROM Users u
+                WHERE u.status = 'active'
+            ) AS u001
+            JOIN (
+                SELECT s.user_id, Sum(s.value) as total
+                FROM Sales s
+                GROUP BY s.user_id
+            )
+            As agg_sales
+            ON u001.id = agg_sales.user_id
+            ORDER BY u001.name
+        """)        
+    )).strip().replace('LEFT', '')
+
+def expected_from_factory() -> str:
+    return re.sub(r'\s+', ' ', """
+    WITH u001 AS (
+        SELECT * FROM Users u
+        WHERE u.status = 'active'
+    ),
+    WITH agg_sales AS (
+        SELECT s.user_id, Sum(s.value) as total
+        FROM Sales s
+        GROUP BY s.user_id
+    )
+    SELECT
+            u001.name,
+            agg_sales.total
+    FROM
+            u001 u001
+            JOIN agg_sales agg_sales ON
+            (u001.id = agg_sales.user_id)
+    ORDER BY
+            u001.name
+    """).strip()
+
+def compare_factory_result() -> bool:
+    txt1 = factory_result()
+    txt2 = expected_from_factory()
+    return SequenceMatcher(None, txt1, txt2).ratio() > 0.66

@@ -873,3 +873,49 @@ R2 = Recursive.create(
 
 >> Note: Comments added later.
 ---
+
+### CTEFactory class
+CTEFactory exchanges subqueries for CTEs, simply by passing the text of the "dirty" query:
+
+*Example*:
+```
+print(
+        CTEFactory("""
+            SELECT u001.name, agg_sales.total
+            FROM (
+                SELECT * FROM Users u
+                WHERE u.status = 'active'
+            ) AS u001
+            JOIN (
+                SELECT s.user_id, Sum(s.value) as total
+                FROM Sales s
+                GROUP BY s.user_id
+            )
+            As agg_sales
+            ON u001.id = agg_sales.user_id
+            ORDER BY u001.name
+        """)        
+)
+```
+results...
+```
+    WITH u001 AS (
+        SELECT * FROM Users u
+        WHERE u.status = 'active'
+    ),
+    WITH agg_sales AS (
+        SELECT s.user_id, Sum(s.value) as total
+        FROM Sales s
+        GROUP BY s.user_id
+    )
+    SELECT
+            u001.name,
+            agg_sales.total
+    FROM
+            u001 u001
+            JOIN agg_sales agg_sales ON
+            (u001.id = agg_sales.user_id)
+    ORDER BY
+            u001.name
+```
+---

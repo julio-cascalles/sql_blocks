@@ -847,8 +847,15 @@ class Rows:
         )
 
 
+class DescOrderBy:
+    @classmethod
+    def add(cls, name: str, main: SQLObject):
+        name = Clause.format(name, main)
+        main.values.setdefault(ORDER_BY, []).append(name + SortType.DESC.value)
+
 class OrderBy(Clause):
     sort: SortType = SortType.ASC
+    DESC = DescOrderBy
 
     @classmethod
     def add(cls, name: str, main: SQLObject):
@@ -1973,13 +1980,12 @@ class NotSelectIN(SelectIN):
 
 class CTE(Select):
     prefix = ''
+    show_query = True
 
-    def __init__(self, table_name: str, query_list: list[Select]):
+    def __init__(self, table_name: str, query_list: list[Select]=[]):
         super().__init__(table_name)
-        for query in query_list:
-            query.break_lines = False
         self.query_list = query_list
-        self.break_lines = False
+        self.break_lines = False        
 
     def __str__(self) -> str:
         size = 0
@@ -1989,6 +1995,7 @@ class CTE(Select):
             self.break_lines = True
         # ---------------------------------------------------------
         def justify(query: Select) -> str:
+            query.break_lines = False
             result, line = [], ''
             keywords = '|'.join(KEYWORD)
             for word in re.split(fr'({keywords}|AND|OR|,)', str(query)):
@@ -2004,7 +2011,7 @@ class CTE(Select):
             self.prefix, self.table_name, 
             '\nUNION ALL\n    '.join(
                 justify(q) for q in self.query_list
-            ), super().__str__()
+            ), super().__str__() if self.show_query else ''
         )
 
     def join(self, pattern: str, fields: list | str, format: str=''):
@@ -2056,6 +2063,56 @@ class Recursive(CTE):
             else:
                 Field.add(f'({name}{increment}) AS {name}', query)
         return self
+
+
+MAIN_TAG = '__main__'
+
+class CTEFactory:
+    def __init__(self, txt: str):
+        """
+        Syntax:
+        ---
+        **SELECT ...
+        FROM** ( `sub_query1` ) **AS** `alias_1`
+        JOIN ( `sub_query2` ) **AS** `alias_2` **ON** `__join__`
+        """
+        summary = self.extract_subqueries(txt)
+        self.main = detect( summary.pop(MAIN_TAG) )
+        self.cte_list = [
+            CTE(alias, [
+                Select.parse(query)[0]
+            ])
+            for alias, query in summary.items()
+        ]
+
+    def __str__(self):
+        CTE.show_query = False
+        lines = [str(cte) for cte in self.cte_list]
+        return ',\n'.join(lines) + '\n' + str(self.main)
+
+    @staticmethod
+    def extract_subqueries(txt: str) -> dict:
+        result = {}
+        for found in re.finditer(r'(FROM|JOIN)\s*[(]\s*SELECT', txt, re.IGNORECASE):
+            start = found.start()
+            alias = ''
+            pos = start
+            while not alias:
+                found = re.search(r'[)]\s*AS\s+\w+', txt[pos:], re.IGNORECASE)
+                if not found:
+                    break
+                end = found.end() + pos
+                elements = txt[start: end].split()
+                if '(' not in elements[-3]:
+                    _, alias = elements[-2:]
+                pos = end
+            first_word = elements.pop(0)
+            if not result:
+                result[MAIN_TAG] = txt[:start]
+            result[MAIN_TAG] += f' {first_word} {alias} {alias}'
+            result[alias] = ' '.join(elements[1: -3])
+        result[MAIN_TAG] += txt[end:]
+        return result
 
 
 # ----- Rules -----
