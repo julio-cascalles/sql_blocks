@@ -39,7 +39,7 @@ from tests.functions import (
 from tests.cte import(
     basic_recursive_cte, compare_basic_recursive,
     create_flight_routes, compare_created_routes,
-    compare_factory_result
+    compare_factory_result, compare_query_list
 )
 
 
@@ -276,5 +276,11 @@ def test_false_sql_injection():
 def test_real_sql_injection():
     assert is_sql_injection(SQLINJECTION_REAL_ATTEMPT)
 
-def test_factory():
-    assert compare_factory_result()
+def test_factory1():
+    assert compare_factory_result(1)
+
+def test_factory2():
+    assert compare_factory_result(2)
+
+def test_cte_query_list():
+    assert compare_query_list()

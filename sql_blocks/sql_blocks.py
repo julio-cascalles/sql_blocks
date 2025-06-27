@@ -2009,7 +2009,7 @@ class CTE(Select):
         # ---------------------------------------------------------
         return 'WITH {}{} AS (\n    {}\n){}'.format(
             self.prefix, self.table_name, 
-            '\nUNION ALL\n    '.join(
+            '\n\tUNION ALL\n    '.join(
                 justify(q) for q in self.query_list
             ), super().__str__() if self.show_query else ''
         )
@@ -2081,8 +2081,9 @@ class CTEFactory:
         self.cte_list = [
             CTE(alias, [
                 Select.parse(query)[0]
+                for query in elements
             ])
-            for alias, query in summary.items()
+            for alias, elements in summary.items()
         ]
 
     def __str__(self):
@@ -2091,8 +2092,20 @@ class CTEFactory:
         return ',\n'.join(lines) + '\n' + str(self.main)
 
     @staticmethod
-    def extract_subqueries(txt: str) -> dict:
+    def extract_subqueries(txt: str) -> dict:        
         result = {}
+        # ---------------------------------------------------
+        def clean_subquery(source: list) -> str:
+            while source:
+                if source[0].upper() == 'SELECT':
+                    break
+                word = source.pop(0)
+                if word.upper() in ('FROM', 'JOIN'):
+                    result[MAIN_TAG] += f' {word}'
+            return ' '.join(source)
+        def balanced_parentheses(expr: str) -> bool:
+            return expr.count('(') == expr.count(')')
+        # ---------------------------------------------------
         for found in re.finditer(r'(FROM|JOIN)\s*[(]\s*SELECT', txt, re.IGNORECASE):
             start = found.start()
             alias = ''
@@ -2102,16 +2115,23 @@ class CTEFactory:
                 if not found:
                     break
                 end = found.end() + pos
-                elements = txt[start: end].split()
-                if '(' not in elements[-3]:
-                    _, alias = elements[-2:]
+                last = end
+                if balanced_parentheses(txt[start: end]):
+                    pos += found.start()
+                    alias = re.findall(r'\s*(\w+)$', txt[pos: end])[0]
+                    end = pos
                 pos = end
-            first_word = elements.pop(0)
             if not result:
                 result[MAIN_TAG] = txt[:start]
-            result[MAIN_TAG] += f' {first_word} {alias} {alias}'
-            result[alias] = ' '.join(elements[1: -3])
-        result[MAIN_TAG] += txt[end:]
+            query_list = [
+                clean_subquery( expr.split() )
+                for expr in  re.split(
+                    r'\bUNION\b', txt[start: end], re.IGNORECASE
+                )
+            ]
+            result[MAIN_TAG] += f' {alias} {alias}'
+            result[alias] = query_list
+        result[MAIN_TAG] += txt[last:]
         return result
 
 

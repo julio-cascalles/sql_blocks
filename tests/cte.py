@@ -70,35 +70,51 @@ def compare_created_routes(obj: Recursive, join_airport: bool = False) -> bool:
     """).lower()
     return SequenceMatcher(None, txt1, txt2).ratio() > 0.66
 
-def factory_result() -> str:
-    return  re.sub(r'\s+', ' ', str(
-        CTEFactory("""
-            SELECT u001.name, agg_sales.total
-            FROM (
-                SELECT * FROM Users u
-                WHERE u.status = 'active'
-            ) AS u001
-            JOIN (
-                SELECT s.user_id, Sum(s.value) as total
-                FROM Sales s
-                GROUP BY s.user_id
-            )
-            As agg_sales
-            ON u001.id = agg_sales.user_id
-            ORDER BY u001.name
-        """)        
-    )).strip().replace('LEFT', '')
 
-def expected_from_factory() -> str:
-    return re.sub(r'\s+', ' ', """
+def get_query_list(count: int) -> tuple:
+    def union_expr(source: list) -> str:
+        return '\n\tUNION ALL\n'.join(source[:count])
+    # ----------------------------------------------------
+    USERS = [
+        "SELECT u.name, u.role FROM Users u WHERE u.role = 'employee'",
+        "SELECT u.name, u.role FROM Users u WHERE u.role = 'customer'"
+    ]
+    SALES = [
+        """SELECT s.user_id, Sum(s.value) as total, 'dec-24' as period
+           FROM Sales s WHERE ref_date = '2024-12-27' GROUP BY s.user_id
+        """,
+        """SELECT s.user_id, Sum(s.value) as total, 'jan-25' as period
+           FROM Sales s WHERE ref_date = '2025-01-31' GROUP BY s.user_id
+        """
+    ]
+    # ----------------------------------------------------
+    return (
+        union_expr(USERS), union_expr(SALES)
+    )
+
+def factory_result(query_count: int) -> CTEFactory:
+    users, sales = get_query_list(query_count)
+    return CTEFactory(f"""
+        SELECT u001.name, agg_sales.total
+        FROM (
+            {users}
+        ) AS u001
+        JOIN (
+            {sales}
+        )
+        As agg_sales
+        ON u001.id = agg_sales.user_id
+        ORDER BY u001.name
+    """)        
+
+def expected_from_factory(query_count: int) -> str:
+    users, sales = get_query_list(query_count)
+    return f"""
     WITH u001 AS (
-        SELECT * FROM Users u
-        WHERE u.status = 'active'
+        {users}
     ),
     WITH agg_sales AS (
-        SELECT s.user_id, Sum(s.value) as total
-        FROM Sales s
-        GROUP BY s.user_id
+        {sales}
     )
     SELECT
             u001.name,
@@ -109,9 +125,18 @@ def expected_from_factory() -> str:
             (u001.id = agg_sales.user_id)
     ORDER BY
             u001.name
-    """).strip()
+    """
 
-def compare_factory_result() -> bool:
-    txt1 = factory_result()
-    txt2 = expected_from_factory()
+def compare_factory_result(count: int) -> bool:
+    txt1, txt2 = [
+        re.sub(r'\s+', ' ', str(res)).strip()
+        for res in [factory_result(1), expected_from_factory(1)]
+    ]
+    txt1 = re.sub('\bLEFT\b', '', txt1)
     return SequenceMatcher(None, txt1, txt2).ratio() > 0.66
+
+def compare_query_list() -> bool:
+    ctes = factory_result(2).cte_list
+    if len(ctes) != 2:
+        return False
+    return all(len(c.query_list) == 2 for c in ctes)
