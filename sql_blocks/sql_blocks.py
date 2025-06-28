@@ -336,7 +336,6 @@ class DateDiff(Function):
             candidate = re.sub(
                 '[()]', '', obj.split('.')[-1]
             )
-            print(f'---------------> #{candidate=}#')
             return candidate.isidentifier()
         self.params = [
             p if is_field_or_func(p) else f"'{p}'"
@@ -676,7 +675,10 @@ class Case:
     
     def then(self, result):
         if isinstance(result, str):
-            result = quoted(result)
+            if result.startswith('='):
+                result = result[1:]
+            else:
+                result = quoted(result)
         self.__conditions[result] = self.current_condition
         return self
     
@@ -2296,12 +2298,3 @@ def detect(text: str, join_queries: bool = True, format: str='') -> Select | lis
         result += query
     return result
 # ===========================================================================================//
-
-if __name__ == "__main__":
-    
-    print(
-        Select(
-            'Emprestimo e',
-            _=Sum(Case('atraso').when(gt(60), 25).when(lt(15), 5).else_value(10)).As('multa', OrderBy)
-        )
-    )
