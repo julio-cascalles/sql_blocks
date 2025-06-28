@@ -210,6 +210,34 @@ class NamedField:
         )
 
 
+class Code:
+    def __init__(self):
+        # --- Replace class method by instance method: ------
+        self.add = self.__add
+        # -----------------------------------------------------
+        self.field_class = Field
+        self.extra = {}
+
+    def As(self, field_alias: str, modifiers=None):
+        if modifiers:
+            self.extra[field_alias] = TO_LIST(modifiers)
+        self.field_class = NamedField(field_alias)
+        return self
+    
+    def format(self, name: str, main: SQLObject) -> str:
+        raise NotImplementedError('Use child classes instead of this one')
+
+    def __add(self, name: str, main: SQLObject):
+        name = self.format(name, main)
+        self.field_class.add(name, main)
+        if self.extra:
+            main.__call__(**self.extra)
+
+    @classmethod
+    def add(cls, name: str, main: SQLObject):
+        cls().__add(name, main)
+
+
 class Dialect(Enum):
     ANSI = 0
     SQL_SERVER = 1
@@ -220,7 +248,7 @@ class Dialect(Enum):
 SQL_TYPES = 'CHAR INT DATE FLOAT ANY'.split()
 CHAR, INT, DATE, FLOAT, ANY  =  SQL_TYPES
 
-class Function:
+class Function(Code):
     dialect = Dialect.ANSI
     inputs = None
     output = None
@@ -241,23 +269,12 @@ class Function:
                 if unfriendly:
                     return Cast(func, main_param)
             return param
-        # --- Replace class methods by instance methods: ------
-        self.add = self.__add
-        self.format = self.__format
-        # -----------------------------------------------------
         self.params = [set_func_types(p) for p in params]
-        self.field_class = Field
         self.pattern = self.get_pattern()
-        self.extra = {}
+        super().__init__()
     
     def get_pattern(self) -> str:
         return '{func_name}({params})'
-
-    def As(self, field_alias: str, modifiers=None):
-        if modifiers:
-            self.extra[field_alias] = TO_LIST(modifiers)
-        self.field_class = NamedField(field_alias)
-        return self
 
     def __str__(self) -> str:
         return self.pattern.format(
@@ -288,24 +305,11 @@ class Function:
         else:
             self.params = new_params + self.params         
 
-    def __format(self, name: str, main: SQLObject) -> str:
+    def format(self, name: str, main: SQLObject) -> str:
         if name not in '*_':
             self.set_main_param(name, main)
         return str(self)
 
-    @classmethod
-    def format(cls, name: str, main: SQLObject):
-        return cls().__format(name, main)
-
-    def __add(self, name: str, main: SQLObject):
-        name = self.format(name, main)
-        self.field_class.add(name, main)
-        if self.extra:
-            main.__call__(**self.extra)
-
-    @classmethod
-    def add(cls, name: str, main: SQLObject):
-        cls().__add(name, main)
 
 
 # ---- String Functions: ---------------------------------
@@ -750,13 +754,33 @@ class Case:
         while tokens:
             word = tokens.pop(0)
             if last_word in KEYWORDS:
-                block = KEYWORDS[last_word](word)
+                try:
+                    block = KEYWORDS[last_word](word)
+                except:
+                    break
                 result += block.fields
                 block.fields = []
             elif word not in RESERVED_WORDS:
                 result.append(word.replace(',', ''))
             last_word = word
         return result
+
+
+class If(Code, Frame):
+    """
+    Behaves like an aggregation function
+    """
+    def __init__(self, field: str, condition: Where, func_class: Function):
+        self.field = field
+        self.condition = condition
+        self.func_class = func_class
+        super().__init__()
+
+    def format(self, name: str, main: SQLObject) -> str:
+        return '{func}({param})'.format(
+            func=self.func_class.__name__,
+            param=Case(self.field).when(self.condition, f'={name}').else_value(0)
+        )
 
 
 class Options:
@@ -918,7 +942,7 @@ class Having:
 
     def add(self, name: str, main:SQLObject):
         main.values[GROUP_BY][-1] += ' HAVING {} {}'.format(
-            self.function.format(name, main), self.condition.content
+            self.function().format(name, main), self.condition.content
         )
     
     @classmethod
@@ -2298,3 +2322,28 @@ def detect(text: str, join_queries: bool = True, format: str='') -> Select | lis
         result += query
     return result
 # ===========================================================================================//
+
+if __name__ == "__main__":
+    q1, q2 = [
+        Select(
+            f'Emprestimo e{num}', usuario=[Field, GroupBy], dt_ref=eq('2024-12-23')
+        ) for num in (1, 2)
+    ]
+    q1(
+        _=Sum(Case('e1.atraso').when(gt(0), '=taxa').else_value(0)).As('multa', OrderBy)
+    )
+    q2( 
+        taxa=If('e2.atraso', gt(0), Sum
+              #   ^^^            ^^^
+              #    |              |
+              #    |       Soma a taxa...
+              #    |
+              #    +----- ... se tiver atraso
+              #
+              ).As('multa', OrderBy)
+    )
+    print('='*50)
+    print(q1)
+    print('-'*50)
+    print(q2)
+    print('='*50)
