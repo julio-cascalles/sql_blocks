@@ -260,7 +260,6 @@ class Function:
         return self
 
     def __str__(self) -> str:
-        Case
         return self.pattern.format(
             func_name=self.__class__.__name__,
             params=self.separator.join(str(p) for p in self.params)
@@ -331,10 +330,13 @@ class DateDiff(Function):
     append_param = True
 
     def __str__(self) -> str:
-        def is_field_or_func(txt: str) -> bool:
+        def is_field_or_func(obj) -> bool:
+            if not isinstance(obj, str):
+                return True
             candidate = re.sub(
-                '[()]', '', txt.split('.')[-1]
+                '[()]', '', obj.split('.')[-1]
             )
+            print(f'---------------> #{candidate=}#')
             return candidate.isidentifier()
         self.params = [
             p if is_field_or_func(p) else f"'{p}'"
@@ -342,7 +344,7 @@ class DateDiff(Function):
         ]
         if self.dialect != Dialect.SQL_SERVER:
             return ' - '.join(
-                self.params
+                str(p) for p in self.params
             )  # <====  Date subtract
         return super().__str__()
 
