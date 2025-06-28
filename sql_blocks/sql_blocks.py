@@ -260,6 +260,7 @@ class Function:
         return self
 
     def __str__(self) -> str:
+        Case
         return self.pattern.format(
             func_name=self.__class__.__name__,
             params=self.separator.join(str(p) for p in self.params)
@@ -656,6 +657,8 @@ class Not(Where):
 
 
 class Case:
+    break_lines = True
+
     def __init__(self, field: str):
         self.__conditions = {}
         self.default = None
@@ -682,16 +685,24 @@ class Case:
         return self
     
     def format(self, name: str, field: str='') -> str:
+        TABULATION = '\t\t' if self.break_lines else ' '
+        LINE_BREAK = '\n' if self.break_lines else ' '
         default = self.default
         if not field:
             field = self.field
-        return 'CASE \n{}\n\tEND AS {}'.format(
-            '\n'.join(
-                f'\t\tWHEN {field} {cond.content} THEN {res}'
+        return 'CASE{brk}{cond}{df}{tab}END{alias}'.format(
+            brk=LINE_BREAK,
+            cond=LINE_BREAK.join(
+                f'{TABULATION}WHEN {field} {cond.content} THEN {res}'
                 for res, cond in self.__conditions.items()
-            ) + (f'\n\t\tELSE {default}' if not default is None else ''),
-            name
+            ),
+            df=f'{LINE_BREAK}{TABULATION}ELSE {default}' if not default is None else '',
+            tab='\n\t' if self.break_lines else ' ',
+            alias=f' AS {name}' if name else ''
         )
+    
+    def __str__(self):
+        return self.format('', self.field)
 
     def add(self, name: str, main: SQLObject):
         main.values.setdefault(SELECT, []).append(
@@ -2283,3 +2294,12 @@ def detect(text: str, join_queries: bool = True, format: str='') -> Select | lis
         result += query
     return result
 # ===========================================================================================//
+
+if __name__ == "__main__":
+    
+    print(
+        Select(
+            'Emprestimo e',
+            _=Sum(Case('atraso').when(gt(60), 25).when(lt(15), 5).else_value(10)).As('multa', OrderBy)
+        )
+    )
