@@ -2322,28 +2322,3 @@ def detect(text: str, join_queries: bool = True, format: str='') -> Select | lis
         result += query
     return result
 # ===========================================================================================//
-
-if __name__ == "__main__":
-    q1, q2 = [
-        Select(
-            f'Emprestimo e{num}', usuario=[Field, GroupBy], dt_ref=eq('2024-12-23')
-        ) for num in (1, 2)
-    ]
-    q1(
-        _=Sum(Case('e1.atraso').when(gt(0), '=taxa').else_value(0)).As('multa', OrderBy)
-    )
-    q2( 
-        taxa=If('e2.atraso', gt(0), Sum
-              #   ^^^            ^^^
-              #    |              |
-              #    |       Soma a taxa...
-              #    |
-              #    +----- ... se tiver atraso
-              #
-              ).As('multa', OrderBy)
-    )
-    print('='*50)
-    print(q1)
-    print('-'*50)
-    print(q2)
-    print('='*50)

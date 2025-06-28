@@ -400,7 +400,7 @@ m2 = Select(
         )
     )
 
-10.1 - If the labels used in the CASE are based on ranges of values ​​in sequence, you can use the **Range class**:
+* 10.1 - If the labels used in the CASE are based on ranges of values ​​in sequence, you can use the **Range class**:
 
         query = Select(
             'People p',
@@ -425,6 +425,28 @@ is equivalent to...
         FROM
                 People p
 ```
+
+* 10.2 `If` class
+
+Usefull to conditional Sum, Avg, Count...
+
+**Example:**
+
+    Select('Emprestimo', 
+        taxa=If('atraso', gt(0), Sum)
+    )
+
+results...
+```
+SELECT
+        Sum(CASE
+                WHEN atraso > 0 THEN taxa
+                ELSE 0
+        END)
+FROM
+        Emprestimo
+```
+
 ---
 
 ### 11 - optimize method
