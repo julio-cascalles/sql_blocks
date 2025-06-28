@@ -130,7 +130,7 @@ def expected_from_factory(query_count: int) -> str:
 def compare_factory_result(count: int) -> bool:
     txt1, txt2 = [
         re.sub(r'\s+', ' ', str(res)).strip()
-        for res in [factory_result(1), expected_from_factory(1)]
+        for res in [factory_result(count), expected_from_factory(count)]
     ]
     txt1 = re.sub('\bLEFT\b', '', txt1)
     return SequenceMatcher(None, txt1, txt2).ratio() > 0.66

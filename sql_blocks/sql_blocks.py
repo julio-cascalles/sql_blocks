@@ -330,16 +330,18 @@ class DateDiff(Function):
     append_param = True
 
     def __str__(self) -> str:
-        def is_field_or_func(name: str) -> bool:
+        def is_field_or_func(txt: str) -> bool:
             candidate = re.sub(
-                '[()]', '', name.split('.')[-1]
+                '[()]', '', txt.split('.')[-1]
             )
             return candidate.isidentifier()
+        self.params = [
+            p if is_field_or_func(p) else f"'{p}'"
+            for p in self.params
+        ]
         if self.dialect != Dialect.SQL_SERVER:
-            params = [str(p) for p in self.params]
             return ' - '.join(
-                p if is_field_or_func(p) else f"'{p}'"
-                for p in params
+                self.params
             )  # <====  Date subtract
         return super().__str__()
 
@@ -687,7 +689,7 @@ class Case:
             '\n'.join(
                 f'\t\tWHEN {field} {cond.content} THEN {res}'
                 for res, cond in self.__conditions.items()
-            ) + (f'\n\t\tELSE {default}' if default else ''),
+            ) + (f'\n\t\tELSE {default}' if not default is None else ''),
             name
         )
 
@@ -2089,7 +2091,9 @@ class CTEFactory:
     def __str__(self):
         CTE.show_query = False
         lines = [str(cte) for cte in self.cte_list]
-        return ',\n'.join(lines) + '\n' + str(self.main)
+        result = ',\n'.join(lines) + '\n' + str(self.main)
+        CTE.show_query = True
+        return result    
 
     @staticmethod
     def extract_subqueries(txt: str) -> dict:        
