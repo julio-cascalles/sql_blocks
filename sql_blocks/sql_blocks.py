@@ -774,6 +774,7 @@ class If(Code, Frame):
         self.field = field
         self.condition = condition
         self.func_class = func_class
+        self.pattern = ''
         super().__init__()
 
     def format(self, name: str, main: SQLObject) -> str:
@@ -2330,15 +2331,3 @@ def detect(text: str, join_queries: bool = True, format: str='') -> Select | lis
         result += query
     return result
 # ===========================================================================================//
-
-if __name__ == "__main__":
-    query = Select(
-        'Emprestimos e',
-        taxa=If('atraso', gt(0), Sum).over(            
-            mes_ano=OrderBy.DESC,
-            _=Rows(Current(), Following(5)),
-            # _=Rows(Preceding(3), Following()),
-            # _=Rows( Preceding(3) ),
-        ).As('multa')
-    )
-    print(query)
