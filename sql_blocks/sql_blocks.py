@@ -399,15 +399,15 @@ class Frame:
         keywords = ''
         for field, obj in args.items():
             is_valid = any([
-                obj is OrderBy,
+                obj is OrderBy, obj is DescOrderBy,
                 obj is Partition,
                 isinstance(obj, Rows),
             ])
             if not is_valid:
                 continue
-            keywords += '{}{} {}'.format(
+            keywords += '{}{}'.format(
                 '\n\t\t' if self.break_lines else ' ',
-                obj.cls_to_str(), field if field != '_' else ''
+                obj.cls_to_str(field if field != '_' else '')
             )
         if keywords and self.break_lines:
             keywords += '\n\t'
@@ -777,10 +777,14 @@ class If(Code, Frame):
         super().__init__()
 
     def format(self, name: str, main: SQLObject) -> str:
-        return '{func}({param})'.format(
+        return '{func}({param}){over}'.format(
             func=self.func_class.__name__,
-            param=Case(self.field).when(self.condition, f'={name}').else_value(0)
+            param=Case(self.field).when(self.condition, f'={name}').else_value(0),
+            over=self.pattern
         )
+    
+    def get_pattern(self) -> str:
+        return ''
 
 
 class Options:
@@ -881,7 +885,7 @@ class Rows:
     def __init__(self, *rows: list[Row]):
         self.rows = rows
 
-    def cls_to_str(self) -> str:
+    def cls_to_str(self, field: str='') -> str:
         return 'ROWS {}{}'.format(
             'BETWEEN ' if len(self.rows) > 1 else '',
             ' AND '.join(str(row) for row in self.rows)
@@ -893,6 +897,11 @@ class DescOrderBy:
     def add(cls, name: str, main: SQLObject):
         name = Clause.format(name, main)
         main.values.setdefault(ORDER_BY, []).append(name + SortType.DESC.value)
+
+    @classmethod
+    def cls_to_str(cls, field: str='') -> str:
+        return f"{ORDER_BY} {field} DESC"
+
 
 class OrderBy(Clause):
     sort: SortType = SortType.ASC
@@ -918,14 +927,13 @@ class OrderBy(Clause):
         return super().format(name, main)
 
     @classmethod
-    def cls_to_str(cls) -> str:
-        return ORDER_BY
+    def cls_to_str(cls, field: str='') -> str:
+        return f"{ORDER_BY} {field}"
 
-PARTITION_BY = 'PARTITION BY'
 class Partition:
     @classmethod
-    def cls_to_str(cls) -> str:
-        return PARTITION_BY
+    def cls_to_str(cls, field: str) -> str:
+        return f'PARTITION BY {field}'
 
 
 class GroupBy(Clause):
@@ -2322,3 +2330,15 @@ def detect(text: str, join_queries: bool = True, format: str='') -> Select | lis
         result += query
     return result
 # ===========================================================================================//
+
+if __name__ == "__main__":
+    query = Select(
+        'Emprestimos e',
+        taxa=If('atraso', gt(0), Sum).over(            
+            mes_ano=OrderBy.DESC,
+            _=Rows(Current(), Following(5)),
+            # _=Rows(Preceding(3), Following()),
+            # _=Rows( Preceding(3) ),
+        ).As('multa')
+    )
+    print(query)
