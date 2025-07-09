@@ -272,6 +272,14 @@ class Function(Code):
         self.params = [set_func_types(p) for p in params]
         self.pattern = self.get_pattern()
         super().__init__()
+
+    @classmethod
+    def descendants(cls) -> list:
+        result = []
+        for sub in cls.__subclasses__():
+            result.append(sub)
+            result += sub.descendants()
+        return result
     
     def get_pattern(self) -> str:
         return '{func_name}({params})'
@@ -459,7 +467,7 @@ class Cast(Function):
     separator = ' As '
 
 
-FUNCTION_CLASS = {f.__name__.lower(): f for f in Function.__subclasses__()}
+FUNCTION_CLASS = {f.__name__.lower(): f for f in Function.descendants()}
 
 
 class ExpressionField:
@@ -770,8 +778,11 @@ class If(Code, Frame):
     """
     Behaves like an aggregation function
     """
-    def __init__(self, field: str, condition: Where, func_class: Function):
-        self.field = field
+    def __init__(self, field: str, func_class: Function, condition: Where=None):
+        if not condition:
+            field, *elements = re.split(r'([<>=]|\bin\b|\blike\b)', field, re.IGNORECASE)
+            condition = Where( ''.join(elements) )
+        self.field = field.strip()
         self.condition = condition
         self.func_class = func_class
         self.pattern = ''
@@ -938,10 +949,35 @@ class Partition:
 
 
 class GroupBy(Clause):
+    def __init__(self, **args):
+        # --- Replace class method by instance method: ------
+        self.add = self.__add
+        # -----------------------------------------------------
+        self.args = args
+
+    def __add(self, name: str, main: SQLObject):        
+        func: Function = None
+        fields = []
+        for alias, obj in self.args.items():
+            if isinstance(obj, type) and obj in Function.descendants():
+                func: Function = obj
+                name = func().format(name, main)
+                NamedField(alias).add(name, main)
+                fields += [alias]
+            elif isinstance(obj, Aggregate):
+                obj.As(alias).add('', main)
+            elif isinstance(obj, Select):
+                query: Select = obj
+                fields += query.values.get(SELECT, [])
+                query.add(alias, main)
+        if not func:
+            fields = [self.format(name, main)]
+        for field in fields:
+            main.values.setdefault(GROUP_BY, []).append(field)
+
     @classmethod
     def add(cls, name: str, main: SQLObject):
-        name = cls.format(name, main)
-        main.values.setdefault(GROUP_BY, []).append(name)
+        cls().__add(name, main)
 
 
 class Having:

@@ -432,15 +432,16 @@ Usefull to conditional Sum, Avg, Count...
 
 **Example:**
 
-    Select('Emprestimo', 
-        taxa=If('atraso', gt(0), Sum)
+    Select('Loan', 
+        penalty=If('days_late', Sum, gt(0))
     )
+    # ...OR... penalty=If('days_late > 0', Sum)
 
 results...
 ```
 SELECT
         Sum(CASE
-                WHEN atraso > 0 THEN taxa
+                WHEN days_late > 0 THEN penalty
                 ELSE 0
         END)
 FROM
@@ -779,6 +780,41 @@ SELECT
 ```
 ---
 
+### 16.1 - _GroupBy as instance_
+
+Another way to use GroupBy is to pass functions as parameters:
+
+```
+    Function.dialect = Dialect.ORACLE
+    query = Select(
+        'Sales s',
+        ref_date=GroupBy(
+            ref_year=Year, qty_sold=Sum('quantity'),
+            vendor=Select(
+                'Vendor v',
+                id=[PrimaryKey, Field], name=Field
+            )
+        )
+    )
+    print(query)
+```
+results..
+```
+SELECT
+        Extract(Year FROM s.ref_date) as ref_year,
+        Sum(quantity) as qty_sold,
+        v.id,
+        v.name
+FROM
+        Sales s
+        JOIN Vendor v ON (s.vendor = v.id)
+GROUP BY
+        ref_year,
+        v.id,
+        v.name
+```
+
+---
 ### 17 - CTE and Recursive classes
 
 * **17.1 - _CTE class_**
