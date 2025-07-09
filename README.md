@@ -182,6 +182,7 @@ FROM
     WHERE
             (album.artist_id = artist.id)
 
+(*) --> For more than one relationship, use the **pairs** parameter.
 
 
 ---

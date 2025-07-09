@@ -624,8 +624,9 @@ class Where:
         ))
 
     @classmethod
-    def join(cls, query: SQLObject):
+    def join(cls, query: SQLObject, pairs: dict=None):
         where = cls(query)
+        where.pairs = pairs
         where.add = where.add_join
         return where
 
@@ -634,11 +635,18 @@ class Where:
         main.values[FROM].append(f',{query.table_name} {query.alias}')
         for key in USUAL_KEYS:
             main.update_values(key, query.values.get(key, []))
-        if query.key_field:
-            main.values.setdefault(WHERE, []).append('({a1}.{f1} = {a2}.{f2})'.format(
-                a1=main.alias, f1=name,
-                a2=query.alias, f2=query.key_field
-            ))
+        if not self.pairs:
+            if not query.key_field:
+                return
+            self.pairs = {name: query.key_field}
+        a1, a2 = main.alias, query.alias
+        main.has_named_field
+        for f1, f2 in self.pairs.items():
+            if main.has_named_field(f1):
+                expr = f'({a2}.{f2} = {f1})'
+            else:
+                expr = f'({a2}.{f2} = {a1}.{f1})'
+            main.values.setdefault(WHERE, []).append(expr)
 
     def add(self, name: str, main: SQLObject):
         func_type = FUNCTION_CLASS.get(name.lower())
@@ -2368,3 +2376,16 @@ def detect(text: str, join_queries: bool = True, format: str='') -> Select | lis
         result += query
     return result
 # ===========================================================================================//
+
+if __name__ == "__main__":
+    query = Select(
+        'Sales s', quantity=Sum().As('qty_sold'),
+        ref_date=Year().As('ref_year'),
+        _=Where.join(
+            Select('Goal G'), dict(
+                prod_id='product', ref_year='year'
+            )
+        )
+    )
+    cte = CTE('Annual_Sales', [query])
+    print(query)
