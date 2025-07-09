@@ -978,6 +978,8 @@ class GroupBy(Clause):
                 query: Select = obj
                 fields += query.values.get(SELECT, [])
                 query.add(alias, main)
+            elif obj == Field:
+                fields += [alias]
         if not func:
             fields += [self.format(name, main)]
         for field in fields:
@@ -2379,13 +2381,20 @@ def detect(text: str, join_queries: bool = True, format: str='') -> Select | lis
 
 if __name__ == "__main__":
     query = Select(
-        'Sales s', quantity=Sum().As('qty_sold'),
-        ref_date=Year().As('ref_year'),
+        'Sales s', #quantity=Sum().As('qty_sold'),
+        ref_date=GroupBy(
+            ref_year=Year, qty_sold=Sum('quantity'),
+            vendor=Select(
+                'Vendor v', id=[PrimaryKey, NamedField('vendor_id')], name=Field
+            ),
+            prod_id=Field
+        )
+    )
+    cte = CTE('Sales_by_year', [query])(
         _=Where.join(
             Select('Goal G'), dict(
-                prod_id='product', ref_year='year'
+                prod_id='product', ref_year='year', vendor_id='vendor'
             )
         )
     )
-    cte = CTE('Annual_Sales', [query])
-    print(query)
+    print(cte)
