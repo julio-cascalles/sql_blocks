@@ -971,8 +971,9 @@ class GroupBy(Clause):
                 fields += query.values.get(SELECT, [])
                 query.add(alias, main)
         if not func:
-            fields = [self.format(name, main)]
+            fields += [self.format(name, main)]
         for field in fields:
+            field = re.split(r'\s+(AS|as)\s+', field)[-1]
             main.values.setdefault(GROUP_BY, []).append(field)
 
     @classmethod
