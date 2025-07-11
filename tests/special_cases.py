@@ -198,7 +198,7 @@ def group_cypher() -> Select:
     )
 
 def cypher_group() -> Select:
-    return detect('People@gender(avg$age?region="SOUTH"^count$qtde)')
+    return detect('People@gender(avg$age?region="SOUTH"^count$:qtde)')
 
 def detected_parser_classes() -> bool:
     CASES = [

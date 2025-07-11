@@ -221,11 +221,12 @@ class Code:
     def As(self, field_alias: str, modifiers=None):
         if modifiers:
             self.extra[field_alias] = TO_LIST(modifiers)
-        self.field_class = NamedField(field_alias)
+        if field_alias:
+            self.field_class = NamedField(field_alias)
         return self
     
     def format(self, name: str, main: SQLObject) -> str:
-        raise NotImplementedError('Use child classes instead of this one')
+        return Field.format(name, main)
 
     def __add(self, name: str, main: SQLObject):
         name = self.format(name, main)
@@ -1674,38 +1675,51 @@ class CypherParser(Parser):
         Where(' '.join(condition)).add(field, query)
     
     def add_order(self, token: str):
-        self.add_field(token, [OrderBy])
+        self.add_field(token, sorted=True)
 
-    def add_field(self, token: str, extra_classes: list['type']=[]):
+    def add_field(self, token: str, sorted: bool = False):
         if token in self.TOKEN_METHODS:
             return
-        class_list = [Field]
         if '*' in token:
             token = token.replace('*', '')
             self.queries[-1].key_field = token
             return
-        elif '$' in token:
-            func_name, token = token.split('$')
-            if func_name == 'count':
-                if not token:
-                    token = 'count_1'
-                pk_field = self.queries[-1].key_field or 'id'
-                Count().As(token, extra_classes).add(pk_field, self.queries[-1])
-                return
-            else:
-                class_type = FUNCTION_CLASS.get(func_name)
+        # -------------------------------------------------------
+        def field_params() -> dict:
+            ROLE_OF_SEPARATOR = {
+                '$': 'function',
+                ':': 'alias',
+                '@': 'group',
+                '!': 'field',
+            }
+            REGEX_FIELD = r'([{}])'.format(''.join(ROLE_OF_SEPARATOR))
+            elements = re.split(REGEX_FIELD, token+'!')
+            return {
+                ROLE_OF_SEPARATOR[k]: v 
+                for k, v in zip(elements[1::2], elements[::2])
+            }
+        def run(function: str='', alias: str='', group: str='', field: str=''):
+            is_count = function == 'count'
+            if alias or is_count:
+                field, alias = alias, field
+            extra_classes = [OrderBy] if sorted else []
+            if group:
+                if not field:
+                    field = group
+                extra_classes += [GroupBy]
+            if function:                
+                if is_count and not field:
+                    field = self.queries[-1].key_field or 'id'
+                class_type = FUNCTION_CLASS.get(function)
                 if not class_type:
-                    raise ValueError(f'Unknown function `{func_name}`.')
-                if ':' in token:
-                    token, field_alias = token.split(':')
-                    if extra_classes == [OrderBy]:
-                        class_type = class_type().As(field_alias, OrderBy)
-                        extra_classes = []
-                    else:
-                        class_type = class_type().As(field_alias)
-                class_list = [class_type]
-        class_list += extra_classes
-        FieldList(token, class_list).add('', self.queries[-1])
+                    raise ValueError(f'Unknown function `{function}`.')
+                class_list = [ class_type().As(alias or group, extra_classes) ]
+            else:
+                class_list = [Field] + extra_classes
+            FieldList(field, class_list).add('', self.queries[-1])
+        # -------------------------------------------------------
+        run( **field_params() )
+        # -------------------------------------------------------
 
     def left_ftable(self, token: str):
         if self.queries:
@@ -2173,6 +2187,13 @@ class CTEFactory:
         FROM** ( `sub_query1` ) **AS** `alias_1`
         JOIN ( `sub_query2` ) **AS** `alias_2` **ON** `__join__`
         """
+        if parser_class(txt) == CypherParser:
+            queries = Select.parse(txt, CypherParser)
+            alias = '_'.join(query.table_name for query in queries)
+            self.main = Select(alias)
+            self.main.break_lines = False
+            self.cte_list = [CTE(alias, queries)]
+            return 
         summary = self.extract_subqueries(txt)
         self.main = detect( summary.pop(MAIN_TAG) )
         self.cte_list = [
@@ -2380,21 +2401,18 @@ def detect(text: str, join_queries: bool = True, format: str='') -> Select | lis
 # ===========================================================================================//
 
 if __name__ == "__main__":
-    query = Select(
-        'Sales s', #quantity=Sum().As('qty_sold'),
-        ref_date=GroupBy(
-            ref_year=Year, qty_sold=Sum('quantity'),
-            vendor=Select(
-                'Vendor v', id=[PrimaryKey, NamedField('vendor_id')], name=Field
-            ),
-            prod_id=Field
-        )
-    )
-    cte = CTE('Sales_by_year', [query])(
-        _=Where.join(
-            Select('Goal G'), dict(
-                prod_id='product', ref_year='year', vendor_id='vendor'
-            )
-        )
+    cte = CTEFactory(
+        "Sales(year$ref_date:ref_year@, sum$quantity:qty_sold, vendor) <- Vendor(id, name@)"
+        # ^^^   ^^^           ^^^
+        #  |     |             |                                       ^^^            ^^^
+        #  |     |             |                                        |              |
+        #  |     |             |         Relaciona Sales com Vendor ----+              |
+        #  |     |             |                                                       |
+        #  |     |             +---- Chama de `ref_year` e agrupa                      |
+        #  |     |                                                                     |
+        #  |     +-- Extrai o ano do campo `ref_date`                                  |
+        #  |                                                                           |
+        #  +--- Tabela de vendas                                                       |
+        #                             Agrupa também pelo nome do vendedor -------------+ 
     )
     print(cte)
