@@ -2131,7 +2131,7 @@ class CTE(Select):
         else:
             count = len(fields)
         queries = detect(
-            pattern*count, join_queries=False, format=format
+            pattern*count, join_method=None, format=format
         )
         FieldList(fields, queries, ziped=True).add('', self)
         self.break_lines = True
@@ -2152,7 +2152,7 @@ class Recursive(CTE):
         def get_field(obj: SQLObject, pos: int) -> str:
             return obj.values[SELECT][pos].split('.')[-1]
         t1, t2 = detect(
-            pattern*2, join_queries=False, format=format
+            pattern*2, join_method=None, format=format
         )
         pk_field = get_field(t1, 0)
         foreign_key = ''
@@ -2188,11 +2188,12 @@ class CTEFactory:
         JOIN ( `sub_query2` ) **AS** `alias_2` **ON** `__join__`
         """
         if parser_class(txt) == CypherParser:
-            queries = Select.parse(txt, CypherParser)
-            alias = '_'.join(query.table_name for query in queries)
+            query_list = Select.parse(txt, CypherParser)
+            alias = '_'.join(query.table_name for query in query_list)
             self.main = Select(alias)
             self.main.break_lines = False
-            self.cte_list = [CTE(alias, queries)]
+            query = join_queries(query_list)
+            self.cte_list = [CTE(alias, [query])]
             return 
         summary = self.extract_subqueries(txt)
         self.main = detect( summary.pop(MAIN_TAG) )
@@ -2372,8 +2373,13 @@ def parser_class(text: str) -> Parser:
             return class_type
     return None
 
+def join_queries(query_list: list) -> Select:
+    result = query_list[0]
+    for query in query_list[1:]:
+        result += query
+    return result
 
-def detect(text: str, join_queries: bool = True, format: str='') -> Select | list[Select]:
+def detect(text: str, join_method = join_queries, format: str='') -> Select | list[Select]:
     from collections import Counter
     parser = parser_class(text)
     if not parser:
@@ -2388,15 +2394,12 @@ def detect(text: str, join_queries: bool = True, format: str='') -> Select | lis
                 Select.EQUIVALENT_NAMES[new_name] = table
                 text = text[:begin] + new_name + '(' + text[end:]
                 count -= 1
-    query_list = Select.parse(text, parser)
+    result = Select.parse(text, parser)
     if format:
-        for query in query_list:
+        for query in result:
             query.set_file_format(format)
-    if not join_queries:
-        return query_list
-    result = query_list[0]
-    for query in query_list[1:]:
-        result += query
+    if join_method:
+        result = join_method(result)
     return result
 # ===========================================================================================//
 
