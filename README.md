@@ -980,7 +980,7 @@ results...
 
 #### 17.3.1 - You can also pass a Cypher script like in the example below:
 
-![image](assets/CTEFactory.png)
+![image](https://raw.githubusercontent.com/julio-cascalles/sql_blocks/refs/heads/master/assets/CTEFactory.png)
 
 results...
 ```
