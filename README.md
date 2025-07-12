@@ -933,7 +933,7 @@ R2 = Recursive.create(
 >> Note: Comments added later.
 ---
 
-### CTEFactory class
+### 17.3 - CTEFactory class
 CTEFactory exchanges subqueries for CTEs, simply by passing the text of the "dirty" query:
 
 *Example*:
@@ -977,4 +977,27 @@ results...
     ORDER BY
             u001.name
 ```
+
+#### 17.3.1 - You can also pass a Cypher script like in the example below:
+
+![image](assets/CTEFactory.png)
+
+results...
+```
+WITH Annual_Sales_per_Vendor AS (
+    SELECT ven.name as vendors_name, Year(sal.ref_date) as ref_year
+    , Sum(sal.quantity) as qty_sold FROM Vendor ven LEFT JOIN Sales sal ON (ven.id = sal.vendor)
+    GROUP BY ven.name, ref_year
+)
+SELECT
+        aspv.ref_year,
+        aspv.qty_sold,
+        aspv.vendors_name,
+        goa.target
+FROM
+        Annual_Sales_per_Vendor aspv
+        RIGHT JOIN Goal goa ON (aspv.ref_year = goa.year)
+```
+
+
 ---

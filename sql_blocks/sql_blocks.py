@@ -336,6 +336,10 @@ class Round(Function):
     inputs = [FLOAT]
     output = FLOAT
 
+class Trunc(Function):
+    inputs = [FLOAT]
+    output = FLOAT
+
 # --- Date Functions: ------------------------------------
 class DateDiff(Function):
     inputs = [DATE]
@@ -1681,8 +1685,11 @@ class CypherParser(Parser):
         if token in self.TOKEN_METHODS:
             return
         if '*' in token:
-            token = token.replace('*', '')
-            self.queries[-1].key_field = token
+            pk_field = token.replace('*', '')
+            if not pk_field.isidentifier():
+                pos = int(pk_field or '1')-1
+                pk_field = self.queries[-1].values[SELECT][pos]
+            self.queries[-1].key_field = pk_field.split('.')[-1]
             return
         # -------------------------------------------------------
         def field_params() -> dict:
@@ -1706,6 +1713,8 @@ class CypherParser(Parser):
             if group:
                 if not field:
                     field = group
+                elif not alias:
+                    alias = group
                 extra_classes += [GroupBy]
             if function:                
                 if is_count and not field:
@@ -1713,7 +1722,9 @@ class CypherParser(Parser):
                 class_type = FUNCTION_CLASS.get(function)
                 if not class_type:
                     raise ValueError(f'Unknown function `{function}`.')
-                class_list = [ class_type().As(alias or group, extra_classes) ]
+                class_list = [ class_type().As(alias, extra_classes) ]
+            elif alias:
+                class_list = [NamedField(alias)] + extra_classes
             else:
                 class_list = [Field] + extra_classes
             FieldList(field, class_list).add('', self.queries[-1])
@@ -2181,17 +2192,28 @@ MAIN_TAG = '__main__'
 class CTEFactory:
     def __init__(self, txt: str):
         """
-        Syntax:
+        SQL syntax:
         ---
-        **SELECT ...
+        **SELECT field, field
         FROM** ( `sub_query1` ) **AS** `alias_1`
         JOIN ( `sub_query2` ) **AS** `alias_2` **ON** `__join__`
+        
+        Cypher syntax:
+        ---
+        Table1(field, `function$`field`:alias`, `group@`) <- Table2(field)
+        `...`MainTable(field)
         """
+        self.main = None
         if parser_class(txt) == CypherParser:
+            if '...' in txt:
+                txt, other = txt.split('...')
+                self.main = detect(other)
+                alias = self.main.table_name
             query_list = Select.parse(txt, CypherParser)
-            alias = '_'.join(query.table_name for query in query_list)
-            self.main = Select(alias)
-            self.main.break_lines = False
+            if not self.main:
+                alias = '_'.join(query.table_name for query in query_list)
+                self.main = Select(alias)
+                self.main.break_lines = False
             query = join_queries(query_list)
             self.cte_list = [CTE(alias, [query])]
             return 
@@ -2405,17 +2427,18 @@ def detect(text: str, join_method = join_queries, format: str='') -> Select | li
 
 if __name__ == "__main__":
     cte = CTEFactory(
-        "Sales(year$ref_date:ref_year@, sum$quantity:qty_sold, vendor) <- Vendor(id, name@)"
+        "Sales(year$ref_date:ref_year@, sum$quantity:qty_sold, vendor) <- Vendor(id, name:vendors_name@)"
         # ^^^   ^^^           ^^^
         #  |     |             |                                       ^^^            ^^^
         #  |     |             |                                        |              |
-        #  |     |             |         Relaciona Sales com Vendor ----+              |
+        #  |     |             |         Relate Sales to Vendor --------+              |
         #  |     |             |                                                       |
-        #  |     |             +---- Chama de `ref_year` e agrupa                      |
+        #  |     |             +---- Call it `ref_year` and group it                   |
         #  |     |                                                                     |
-        #  |     +-- Extrai o ano do campo `ref_date`                                  |
+        #  |     +-- Extracts the year from the `ref_date` field                       |
         #  |                                                                           |
-        #  +--- Tabela de vendas                                                       |
-        #                             Agrupa também pelo nome do vendedor -------------+ 
+        #  +--- The Sales table                                                        |
+        #                               Also groups by vendor´s name ------------------+ 
+        "...Annual_Sales_per_Vendor(ref_year, qty_sold, vendors_name, *) -> Goal(year, target)"
     )
     print(cte)
