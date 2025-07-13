@@ -980,6 +980,13 @@ results...
 
 #### 17.3.1 - You can also pass a Cypher script like in the example below:
 
+    cte = CTEFactory(
+        "Sales(year$ref_date:ref_year@, sum$quantity:qty_sold, vendor)"
+        " <- Vendor(id, name:vendors_name@)"
+        "...Annual_Sales_per_Vendor(*) -> Goal(year, target)"
+    )
+    print(cte)
+
 ![image](https://raw.githubusercontent.com/julio-cascalles/sql_blocks/refs/heads/master/assets/CTEFactory.png)
 
 results...

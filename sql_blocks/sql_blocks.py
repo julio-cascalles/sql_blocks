@@ -2203,14 +2203,25 @@ class CTEFactory:
         Table1(field, `function$`field`:alias`, `group@`) <- Table2(field)
         `...`MainTable(field)
         """
-        self.main = None
         if parser_class(txt) == CypherParser:
-            if '...' in txt:
-                txt, other = txt.split('...')
-                self.main = detect(other)
-                alias = self.main.table_name
+            txt, main_script = txt.split('...')
             query_list = Select.parse(txt, CypherParser)
-            if not self.main:
+            if main_script:
+                main_script = ''.join(main_script)
+                if '(*)' in main_script:
+                    field_list = [
+                        re.split(
+                            r'\bas\b|\bAS\b', field
+                        )[-1].strip()
+                        for query in query_list
+                        for field in query.values.get(SELECT, [])
+                    ]
+                    main_script = main_script.replace('(*)', '({}, *)'.format(
+                        ','.join(field_list)
+                    ))
+                self.main = detect(main_script)
+                alias = self.main.table_name
+            else:
                 alias = '_'.join(query.table_name for query in query_list)
                 self.main = Select(alias)
                 self.main.break_lines = False
@@ -2439,6 +2450,6 @@ if __name__ == "__main__":
         #  |                                                                           |
         #  +--- The Sales table                                                        |
         #                               Also groups by vendor´s name ------------------+ 
-        "...Annual_Sales_per_Vendor(ref_year, qty_sold, vendors_name, *) -> Goal(year, target)"
+        "...Annual_Sales_per_Vendor(*) -> Goal(year, target)"
     )
     print(cte)
