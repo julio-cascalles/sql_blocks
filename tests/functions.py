@@ -4,6 +4,7 @@ from sql_blocks.sql_blocks import *
 
 
 def diff_over_sum() -> set:
+    OrderBy.sort = SortType.ASC
     Aggregate.break_lines = False
     query=Select(
         'Enrollment e',

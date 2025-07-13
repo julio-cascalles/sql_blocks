@@ -200,7 +200,13 @@ def test_over():
         'partition by student_id order by due_date',
         'as sum_per_student'
     }
-    assert diff_over_sum().intersection(expected) == expected
+    res = diff_over_sum()
+    print('@'*50)
+    print(res)
+    print('-'*50)
+    print(res.intersection(expected))
+    print('@'*50)
+    assert res.intersection(expected) == expected
 
 def test_function_fields():
     expected = [

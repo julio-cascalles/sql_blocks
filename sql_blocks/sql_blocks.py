@@ -945,15 +945,16 @@ class OrderBy(Clause):
 
     @classmethod
     def format(cls, name: str, main: SQLObject) -> str:
-        if cls.ascending(name):
-            cls.sort = SortType.ASC
-        else:
+        # if cls.ascending(name):
+        #     cls.sort = SortType.ASC
+        # else:
+        if not cls.ascending(name):
             cls.sort = SortType.DESC
         return super().format(name, main)
 
     @classmethod
     def cls_to_str(cls, field: str='') -> str:
-        return f"{ORDER_BY} {field}"
+        return f"{ORDER_BY} {field}{cls.sort.value}"
 
 class Partition:
     @classmethod
@@ -1064,7 +1065,8 @@ class QueryLanguage:
         return  self.join_with_tabs(values, ' AND ')
 
     def sort_by(self, values: list) -> str:
-        if OrderBy.sort == SortType.DESC and OrderBy.ascending(values[-1]):
+        is_ascending = OrderBy.ascending(values[-1]) if values else False
+        if OrderBy.sort == SortType.DESC and is_ascending:
             values[-1] += ' DESC'
         return self.join_with_tabs(values, ',')
 
@@ -2436,7 +2438,9 @@ def detect(text: str, join_method = join_queries, format: str='') -> Select | li
     return result
 # ===========================================================================================//
 
+
 if __name__ == "__main__":
+    OrderBy.sort = SortType.DESC
     cte = CTEFactory(
         "Sales(year$ref_date:ref_year@, sum$quantity:qty_sold, vendor) <- Vendor(id, name:vendors_name@)"
         # ^^^   ^^^           ^^^
@@ -2450,6 +2454,6 @@ if __name__ == "__main__":
         #  |                                                                           |
         #  +--- The Sales table                                                        |
         #                               Also groups by vendor´s name ------------------+ 
-        "...Annual_Sales_per_Vendor(*) -> Goal(year, target)"
+        "...Annual_Sales_per_Vendor(*) -> Goal(^year, target)"
     )
     print(cte)
