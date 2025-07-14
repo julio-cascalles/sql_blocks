@@ -202,9 +202,14 @@ class NamedField:
         self.class_type = class_type
 
     def add(self, name: str, main: SQLObject):
+        def is_literal() -> bool:
+            if re.search(r'^[\'"].*', name):
+                return True
+            return False
         main.values.setdefault(SELECT, []).append(
             '{} as {}'.format(
-                self.class_type.format(name, main),
+                name if is_literal() 
+                else self.class_type.format(name, main),
                 self.alias  # --- field alias
             )
         )
@@ -2206,29 +2211,24 @@ class CTEFactory:
         `...`MainTable(field)
         """
         if parser_class(txt) == CypherParser:
-            txt, main_script = txt.split('...')
+            txt, *main_script = txt.split('...')
             query_list = Select.parse(txt, CypherParser)
             if main_script:
-                main_script = ''.join(main_script)
-                if '(*)' in main_script:
-                    field_list = [
-                        re.split(
-                            r'\bas\b|\bAS\b', field
-                        )[-1].strip()
-                        for query in query_list
-                        for field in query.values.get(SELECT, [])
-                    ]
-                    main_script = main_script.replace('(*)', '({}, *)'.format(
-                        ','.join(field_list)
-                    ))
+                main_script = self.replace_wildcards(
+                    ''.join(main_script), query_list
+                )
                 self.main = detect(main_script)
                 alias = self.main.table_name
             else:
                 alias = '_'.join(query.table_name for query in query_list)
                 self.main = Select(alias)
                 self.main.break_lines = False
-            query = join_queries(query_list)
-            self.cte_list = [CTE(alias, [query])]
+            related_tables = any([
+                query.join_type.value for query in query_list
+            ])
+            if related_tables:
+                query_list = [ join_queries(query_list) ]
+            self.cte_list = [CTE(alias, query_list)]
             return 
         summary = self.extract_subqueries(txt)
         self.main = detect( summary.pop(MAIN_TAG) )
@@ -2246,6 +2246,21 @@ class CTEFactory:
         result = ',\n'.join(lines) + '\n' + str(self.main)
         CTE.show_query = True
         return result    
+    
+    @staticmethod
+    def replace_wildcards(txt: str, query_list: list) -> str:
+        if '(*)' in txt:
+            field_list = [
+                re.split(
+                    r'\bas\b|\bAS\b', field
+                )[-1].strip()
+                for query in query_list
+                for field in query.values.get(SELECT, [])
+            ]
+            return txt.replace('(*)', '({}, *)'.format(
+                ','.join( set(field_list) )
+            ))
+        return txt
 
     @staticmethod
     def extract_subqueries(txt: str) -> dict:        
@@ -2282,7 +2297,7 @@ class CTEFactory:
             query_list = [
                 clean_subquery( expr.split() )
                 for expr in  re.split(
-                    r'\bUNION\b', txt[start: end], re.IGNORECASE
+                    r'\bUNION\b', txt[start: end], flags=re.IGNORECASE
                 )
             ]
             result[MAIN_TAG] += f' {alias} {alias}'
@@ -2399,8 +2414,8 @@ def parser_class(text: str) -> Parser:
     PARSER_REGEX = [
         (r'select.*from', SQLParser),
         (r'[.](find|aggregate)[(]', MongoParser),
-        (r'[(\[]\w*[:]\w+', Neo4JParser),
-        (r'^\w+[@]*\w*[(]', CypherParser)
+        (r'\bmatch\b\s*[(]', Neo4JParser),
+        (r'^\w+[@]*\w*[(].*[\^@:\$,]', CypherParser),
     ]
     text = Parser.remove_spaces(text)
     for regex, class_type in PARSER_REGEX:
@@ -2442,6 +2457,7 @@ def detect(text: str, join_method = join_queries, format: str='') -> Select | li
 if __name__ == "__main__":
     OrderBy.sort = SortType.DESC
     cte = CTEFactory(
+        # 'Cliente("C":tipo, nome:nome_pessoa)Empregado("E":tipo, nome:nome_pessoa)Fornecedor("F":tipo, nome:nome_pessoa)'
         "Sales(year$ref_date:ref_year@, sum$quantity:qty_sold, vendor) <- Vendor(id, name:vendors_name@)"
         # ^^^   ^^^           ^^^
         #  |     |             |                                       ^^^            ^^^
@@ -2455,5 +2471,6 @@ if __name__ == "__main__":
         #  +--- The Sales table                                                        |
         #                               Also groups by vendor´s name ------------------+ 
         "...Annual_Sales_per_Vendor(*) -> Goal(^year, target)"
+        # "...Pessoas_por_tipo(*)"
     )
     print(cte)
