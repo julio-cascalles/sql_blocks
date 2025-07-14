@@ -2197,7 +2197,8 @@ class Recursive(CTE):
 MAIN_TAG = '__main__'
 
 class CTEFactory:
-    def __init__(self, txt: str):
+    
+    def __init__(self, txt: str, template: str = ''):
         """
         SQL syntax:
         ---
@@ -2210,6 +2211,9 @@ class CTEFactory:
         Table1(field, `function$`field`:alias`, `group@`) <- Table2(field)
         `...`MainTable(field)
         """
+        if template:
+            for table in re.findall(r'[#](\w+)', txt):
+                txt = txt.replace(f'#{table}', template.format(t=table))
         if parser_class(txt) == CypherParser:
             txt, *main_script = txt.split('...')
             query_list = Select.parse(txt, CypherParser)
@@ -2415,7 +2419,7 @@ def parser_class(text: str) -> Parser:
         (r'select.*from', SQLParser),
         (r'[.](find|aggregate)[(]', MongoParser),
         (r'\bmatch\b\s*[(]', Neo4JParser),
-        (r'^\w+[@]*\w*[(].*[\^@:\$,]', CypherParser),
+        (r'^\w+\S+[(]', CypherParser),
     ]
     text = Parser.remove_spaces(text)
     for regex, class_type in PARSER_REGEX:
@@ -2457,8 +2461,24 @@ def detect(text: str, join_method = join_queries, format: str='') -> Select | li
 if __name__ == "__main__":
     OrderBy.sort = SortType.DESC
     cte = CTEFactory(
-        # 'Cliente("C":tipo, nome:nome_pessoa)Empregado("E":tipo, nome:nome_pessoa)Fornecedor("F":tipo, nome:nome_pessoa)'
-        "Sales(year$ref_date:ref_year@, sum$quantity:qty_sold, vendor) <- Vendor(id, name:vendors_name@)"
+        # "#Customer#Employee#Supplier...People_by_Type(*)",
+        # template = '{t}("{t[0]}":ptype, nome:person_name)'
+        """
+            SELECT u001.name, agg_sales.total
+            FROM (
+                SELECT * FROM Users u
+                WHERE u.status = 'active'
+            ) AS u001
+            JOIN (
+                SELECT s.user_id, Sum(s.value) as total
+                FROM Sales s
+                GROUP BY s.user_id
+            )
+            As agg_sales
+            ON u001.id = agg_sales.user_id
+            ORDER BY u001.name
+        """        
+        # "Sales(year$ref_date:ref_year@, sum$quantity:qty_sold, vendor) <- Vendor(id, name:vendors_name@)"
         # ^^^   ^^^           ^^^
         #  |     |             |                                       ^^^            ^^^
         #  |     |             |                                        |              |
@@ -2470,7 +2490,6 @@ if __name__ == "__main__":
         #  |                                                                           |
         #  +--- The Sales table                                                        |
         #                               Also groups by vendor´s name ------------------+ 
-        "...Annual_Sales_per_Vendor(*) -> Goal(^year, target)"
-        # "...Pessoas_por_tipo(*)"
+        # "...Annual_Sales_per_Vendor(*) -> Goal(^year, target)"
     )
     print(cte)
