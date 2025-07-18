@@ -140,3 +140,23 @@ def compare_query_list() -> bool:
     if len(ctes) != 2:
         return False
     return all(len(c.query_list) == 2 for c in ctes)
+
+def cte_factory_cypher_results() -> list:
+    cte = CTEFactory(
+        txt='''
+            #Employee #Customer #Supplier
+
+            All_people[
+                [1]     [2]     [3]
+            ]
+            
+            [-1](**, ref_year*) <- Goal(^year, target)
+        ''',
+        template='''
+            Sales_by_{t}[
+                Sales(year$ref_date:ref_year@, sum$quantity:qty_sold,
+                {f}) -> {t}(id, name:person_name@)
+            ]
+        '''
+    )
+    return re.findall(r'\bWITH\s+(\w+)', str(cte))

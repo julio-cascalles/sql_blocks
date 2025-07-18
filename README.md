@@ -571,6 +571,7 @@ ORDER BY
 * `@` Immediately after the table/field name, it indicates the grouping field.
 * `$` For SQL functions like **avg**$_field_, **sum**$_field_, **count**$_field_...
 * `*` Sets the primary key field.
+* `:` Allows you to assign an alias to the field or expression.
 
 
 ---

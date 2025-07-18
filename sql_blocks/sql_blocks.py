@@ -2504,25 +2504,3 @@ def detect(text: str, join_method = join_queries, format: str='') -> Select | li
 # ===========================================================================================//
 
 
-if __name__ == "__main__":
-    # cte = CTEFactory("""
-    # Sales(year$ref_date:ref_year@, sum$quantity:qty_sold, vendor) <- Vendor(id, name:vendors_name@)
-    # """)
-    cte = CTEFactory(
-        txt='''
-            #Empregado #Cliente #Fornecedor
-
-            Todas_as_pessoas[
-                [1]     [2]     [3]
-            ]
-            
-            [-1](**, ano*) <- Meta(^ano, qt_ideal)
-        ''',
-        template='''
-            Vendas_por_{t}[
-                Vendas(year$data:ano@, sum$quantidade:qt_vendida,
-                {f}) -> {t}(id, nome:nome_pessoa@)
-            ]
-        '''
-    )
-    print(cte)

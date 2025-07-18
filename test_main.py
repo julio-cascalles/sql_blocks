@@ -39,7 +39,8 @@ from tests.functions import (
 from tests.cte import(
     basic_recursive_cte, compare_basic_recursive,
     create_flight_routes, compare_created_routes,
-    compare_factory_result, compare_query_list
+    compare_factory_result, compare_query_list,
+    cte_factory_cypher_results
 )
 
 
@@ -294,3 +295,7 @@ def test_factory2():
 
 def test_cte_query_list():
     assert compare_query_list()
+
+def test_ctefactory_cypher():
+    cte_names = ['Sales_by_Employee', 'Sales_by_Customer', 'Sales_by_Supplier', 'All_people']
+    assert cte_factory_cypher_results() == cte_names
