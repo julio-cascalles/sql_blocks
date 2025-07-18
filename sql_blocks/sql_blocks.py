@@ -2241,7 +2241,7 @@ class CTEFactory:
         if suffix:
             self.main = detect( self.replace_wildcards(''.join(suffix)) )
         elif not self.main:
-            self.main = Select(self.cte_list[0].table_name)
+            self.main = Select(self.cte_list[-1].table_name)
             self.main.break_lines = False
 
     def build_ctes(self, script: str):
