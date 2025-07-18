@@ -1994,7 +1994,7 @@ class Select(SQLObject):
         from copy import deepcopy
         return deepcopy(self)
 
-    def no_relation_error(self, other: SQLObject):
+    def relation_error(self, other: SQLObject):
         raise ValueError(f'No relationship found between {self.table_name} and {other.table_name}.')
 
     def __add__(self, other: SQLObject):
@@ -2011,7 +2011,7 @@ class Select(SQLObject):
                     PrimaryKey.add(primary_key, query)
                 query.add(foreign_field, other)
                 return other
-            self.no_relation_error(other) # === raise ERROR ...  ===
+            self.relation_error(other) # === raise ERROR ...  ===
         elif primary_key:
             PrimaryKey.add(primary_key, other)
         other.add(foreign_field, query)
@@ -2040,7 +2040,7 @@ class Select(SQLObject):
         else:
             fk_field, primary_k = ForeignKey.find(other, self)
             if not fk_field:
-                self.no_relation_error(other) # === raise ERROR ...  ===
+                self.relation_error(other) # === raise ERROR ...  ===
             query = other.copy()
             other = self.copy()
         query.__class__ = NotSelectIN
@@ -2127,8 +2127,8 @@ class CTE(Select):
             query.break_lines = False
             result, line = [], ''
             keywords = '|'.join(KEYWORD)
-            for word in re.split(fr'({keywords}|AND|OR|,)', str(query)):
-                if len(line) >= 50:
+            for word in re.split(fr'({keywords}|AND|OR|JOIN|,)', str(query)):
+                if len(line) >= 30:
                     result.append(line)
                     line = ''
                 line += word
@@ -2197,7 +2197,8 @@ class Recursive(CTE):
 MAIN_TAG = '__main__'
 
 class CTEFactory:
-    
+    TEMPLATE_FIELD_FUNC = lambda t: t.lower()[:3] + '_id'
+
     def __init__(self, txt: str, template: str = ''):
         """
         SQL syntax:
@@ -2208,35 +2209,61 @@ class CTEFactory:
         
         Cypher syntax:
         ---
-        Table1(field, `function$`field`:alias`, `group@`) <- Table2(field)
-        `...`MainTable(field)
+        `cte_name`[
+            Table1(field, `function$`field`:alias`, `group@`) <- Table2(field)
+        ]        
         """
+        def put_parentheses():
+            result = txt
+            for found in re.findall(r'\[\d+\][^(]', result):
+                item = found.strip()[:3]
+                result = result.replace(item, f'{item}()')
+            return result
+        txt, *negative = re.split(r'(\[-\d+\])', txt)
+        txt = put_parentheses()
+        txt, *suffix = re.split(r'(\[\d+\])', txt, maxsplit=1)
         if template:
             for table in re.findall(r'[#](\w+)', txt):
-                txt = txt.replace(f'#{table}', template.format(t=table))
-        if parser_class(txt) == CypherParser:
-            txt, *main_script = txt.split('...')
-            query_list = Select.parse(txt, CypherParser)
-            if main_script:
-                main_script = self.replace_wildcards(
-                    ''.join(main_script), query_list
-                )
-                self.main = detect(main_script)
-                alias = self.main.table_name
-            else:
+                txt = txt.replace( f'#{table}', template.format(
+                    t=table, f=CTEFactory.TEMPLATE_FIELD_FUNC(table)
+                ) )
+        self.cte_list = []
+        self.main = None
+        for script in txt.split(']'):
+            if '(' not in script:
+                script += self.replace_wildcards(''.join(suffix))
+                suffix = []
+            self.build_ctes(script)
+        if not self.cte_list:
+            return
+        if not suffix and negative:
+            suffix = negative
+        if suffix:
+            self.main = detect( self.replace_wildcards(''.join(suffix)) )
+        else:
+            self.main = Select(self.cte_list[0].table_name)
+
+    def build_ctes(self, script: str):
+        alias, *body = script.split('[')
+        if body:
+            script = ''.join(body)
+        script = re.sub( r'\s+', '', script)
+        if not script:
+            return
+        if parser_class(script) == CypherParser:
+            query_list = Select.parse(script, CypherParser)
+            if not body:
                 alias = '_'.join(query.table_name for query in query_list)
-                self.main = Select(alias)
-                self.main.break_lines = False
             related_tables = any([
                 query.join_type.value for query in query_list
             ])
             if related_tables:
                 query_list = [ join_queries(query_list) ]
-            self.cte_list = [CTE(alias, query_list)]
+            self.cte_list += [CTE(alias, query_list)]
             return 
-        summary = self.extract_subqueries(txt)
+        summary = self.extract_subqueries(script)
         self.main = detect( summary.pop(MAIN_TAG) )
-        self.cte_list = [
+        self.cte_list += [
             CTE(alias, [
                 Select.parse(query)[0]
                 for query in elements
@@ -2245,24 +2272,43 @@ class CTEFactory:
         ]
 
     def __str__(self):
+        if not self.main:
+            return ''
         CTE.show_query = False
         lines = [str(cte) for cte in self.cte_list]
         result = ',\n'.join(lines) + '\n' + str(self.main)
         CTE.show_query = True
         return result    
     
-    @staticmethod
-    def replace_wildcards(txt: str, query_list: list) -> str:
-        if '(*)' in txt:
-            field_list = [
-                re.split(
-                    r'\bas\b|\bAS\b', field
-                )[-1].strip()
-                for query in query_list
-                for field in query.values.get(SELECT, [])
-            ]
-            return txt.replace('(*)', '({}, *)'.format(
-                ','.join( set(field_list) )
+    def replace_wildcards(self, txt: str) -> str:
+        ALL_FIELDS_WILDCARD = '**'
+        result = ''
+        names = []
+        query_list = []
+        cte: CTE
+        for cte in self.cte_list:
+            names.append(cte.table_name)
+            query_list += cte.query_list
+        last = 0
+        for found in re.finditer(r'\[[-]*\d+\]', txt):
+            pos = int(re.sub(r'\[|\]', '', found.group()))
+            if pos > 0:
+                pos -= 1
+            start = found.start()
+            result += txt[last:start] + names[pos]
+            last = found.end()
+        txt = result + txt[last:]
+        if ALL_FIELDS_WILDCARD in txt:
+            field_list = []
+            for query in query_list:
+                for field in query.values.get(SELECT, []):
+                    new_item = re.split(
+                        r'\bas\b|\bAS\b|[.]', field
+                    )[-1].strip()
+                    if new_item not in field_list:
+                        field_list.append(new_item)
+            return txt.replace(ALL_FIELDS_WILDCARD, '{}'.format(
+                ','.join(field_list)
             ))
         return txt
 
@@ -2459,37 +2505,24 @@ def detect(text: str, join_method = join_queries, format: str='') -> Select | li
 
 
 if __name__ == "__main__":
-    OrderBy.sort = SortType.DESC
     cte = CTEFactory(
-        # "#Customer#Employee#Supplier...People_by_Type(*)",
-        # template = '{t}("{t[0]}":ptype, nome:person_name)'
-        """
-            SELECT u001.name, agg_sales.total
-            FROM (
-                SELECT * FROM Users u
-                WHERE u.status = 'active'
-            ) AS u001
-            JOIN (
-                SELECT s.user_id, Sum(s.value) as total
-                FROM Sales s
-                GROUP BY s.user_id
-            )
-            As agg_sales
-            ON u001.id = agg_sales.user_id
-            ORDER BY u001.name
-        """        
-        # "Sales(year$ref_date:ref_year@, sum$quantity:qty_sold, vendor) <- Vendor(id, name:vendors_name@)"
-        # ^^^   ^^^           ^^^
-        #  |     |             |                                       ^^^            ^^^
-        #  |     |             |                                        |              |
-        #  |     |             |         Relate Sales to Vendor --------+              |
-        #  |     |             |                                                       |
-        #  |     |             +---- Call it `ref_year` and group it                   |
-        #  |     |                                                                     |
-        #  |     +-- Extracts the year from the `ref_date` field                       |
-        #  |                                                                           |
-        #  +--- The Sales table                                                        |
-        #                               Also groups by vendor´s name ------------------+ 
-        # "...Annual_Sales_per_Vendor(*) -> Goal(^year, target)"
+        txt='''
+            #Empregado#Cliente#Fornecedor
+
+            Todas_as_pessoas[
+                [1]
+                [2]
+                [3]
+            ]
+            
+            [-1](**, ano) <- Meta(ano, qt_ideal)
+        ''',
+        template='''
+            Vendas_por_{t}[
+                Vendas(
+                    year$data:ano@, sum$quantidade:qt_vendida,
+                {f}) -> {t}(id, nome:nome_pessoa@)
+            ]
+        '''
     )
     print(cte)
