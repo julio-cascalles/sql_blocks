@@ -2240,15 +2240,15 @@ class CTEFactory:
             suffix = negative
         if suffix:
             self.main = detect( self.replace_wildcards(''.join(suffix)) )
-        else:
+        elif not self.main:
             self.main = Select(self.cte_list[0].table_name)
+            self.main.break_lines = False
 
     def build_ctes(self, script: str):
         alias, *body = script.split('[')
         if body:
             script = ''.join(body)
-        script = re.sub( r'\s+', '', script)
-        if not script:
+        if not re.sub( r'\s+', '', script):
             return
         if parser_class(script) == CypherParser:
             query_list = Select.parse(script, CypherParser)
@@ -2505,22 +2505,22 @@ def detect(text: str, join_method = join_queries, format: str='') -> Select | li
 
 
 if __name__ == "__main__":
+    # cte = CTEFactory("""
+    # Sales(year$ref_date:ref_year@, sum$quantity:qty_sold, vendor) <- Vendor(id, name:vendors_name@)
+    # """)
     cte = CTEFactory(
         txt='''
-            #Empregado#Cliente#Fornecedor
+            #Empregado #Cliente #Fornecedor
 
             Todas_as_pessoas[
-                [1]
-                [2]
-                [3]
+                [1]     [2]     [3]
             ]
             
-            [-1](**, ano) <- Meta(ano, qt_ideal)
+            [-1](**, ano*) <- Meta(ano, qt_ideal)
         ''',
         template='''
             Vendas_por_{t}[
-                Vendas(
-                    year$data:ano@, sum$quantidade:qt_vendida,
+                Vendas(year$data:ano@, sum$quantidade:qt_vendida,
                 {f}) -> {t}(id, nome:nome_pessoa@)
             ]
         '''

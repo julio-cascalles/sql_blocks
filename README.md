@@ -980,26 +980,30 @@ results...
 
 #### 17.3.1 - You can also pass a Cypher script like in the example below:
 
-    cte = CTEFactory(
-        "Sales(year$ref_date:ref_year@, sum$quantity:qty_sold, vendor)"
-        " <- Vendor(id, name:vendors_name@)"
-        "...Annual_Sales_per_Vendor(*) -> Goal(year, target)"
-    )
-    print(cte)
+    cte = CTEFactory("""
+        Annual_Sales_per_Vendor[
+            Sales(
+                year$ref_date:ref_year@, sum$quantity:qty_sold,
+            vendor) <- Vendor(id, name:vendors_name@)
+        ]
 
-![image](https://raw.githubusercontent.com/julio-cascalles/sql_blocks/refs/heads/master/assets/CTEFactory.png)
+        [-1](**, ref_year) -> Goal(year, target)
+    """)
+    print(cte)
 
 results...
 ```
 WITH Annual_Sales_per_Vendor AS (
-    SELECT ven.name as vendors_name, Year(sal.ref_date) as ref_year
-    , Sum(sal.quantity) as qty_sold FROM Vendor ven LEFT JOIN Sales sal ON (ven.id = sal.vendor)
+    SELECT ven.name as vendors_name
+    , Year(sal.ref_date) as ref_year
+    , Sum(sal.quantity) as qty_sold
+    FROM Vendor ven LEFT JOIN Sales sal ON (ven.id = sal.vendor
     GROUP BY ven.name, ref_year
 )
 SELECT
+        aspv.vendors_name,
         aspv.ref_year,
         aspv.qty_sold,
-        aspv.vendors_name,
         goa.target
 FROM
         Annual_Sales_per_Vendor aspv
