@@ -558,14 +558,14 @@ ORDER BY
         mov.title
 ```
 ---
-> **Separators and meaning:**
+> **Separators and meaning:**  {#cypher_separators}
 * `(  )`  Delimits a table and its fields
 * `,` Separate fields
 * `?` For simple conditions (> < = <>)
 * `<-` connects to the table on the left
 * `->` connects to the table on the right
 * `^` Put the field in the ORDER BY clause
-* `@` Immediately after the table name, it indicates the grouping field.
+* `@` Immediately after the table/field name, it indicates the grouping field.
 * `$` For SQL functions like **avg**$_field_, **sum**$_field_, **count**$_field_...
 * `*` Sets the primary key field.
 
@@ -866,6 +866,7 @@ UNION ALL
         '[2] = R.[1]',  'JFK',  format='.csv'
     ) #                  ^^^--- Flyghts from JFK airport
 ```
+{#cte_create_method}
 _...Creates a recursive CTE called Route, using Flyght table, where the recursivity condition is Flyght.arrival equals to Route.departure_
 >> (*) -- Note that [1] and [2] refers to first field and second field. 😉
 
@@ -1009,6 +1010,7 @@ FROM
         Annual_Sales_per_Vendor aspv
         RIGHT JOIN Goal goa ON (aspv.ref_year = goa.year)
 ```
+For more details, see the [Cypher syntax](#cypher_separators) or [CTE create method](#cte_create_method)!
 
 
 ---

@@ -2516,7 +2516,7 @@ if __name__ == "__main__":
                 [1]     [2]     [3]
             ]
             
-            [-1](**, ano*) <- Meta(ano, qt_ideal)
+            [-1](**, ano*) <- Meta(^ano, qt_ideal)
         ''',
         template='''
             Vendas_por_{t}[
