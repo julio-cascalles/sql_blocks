@@ -558,7 +558,8 @@ ORDER BY
         mov.title
 ```
 ---
-> **Separators and meaning:**  {#cypher_separators}
+<a id="cypher_separators"></a>
+####Separators and meaning:**  
 * `(  )`  Delimits a table and its fields
 * `,` Separate fields
 * `?` For simple conditions (> < = <>)
@@ -866,7 +867,7 @@ UNION ALL
         '[2] = R.[1]',  'JFK',  format='.csv'
     ) #                  ^^^--- Flyghts from JFK airport
 ```
-{#cte_create_method}
+<a id="cte_create_method"></a>
 _...Creates a recursive CTE called Route, using Flyght table, where the recursivity condition is Flyght.arrival equals to Route.departure_
 >> (*) -- Note that [1] and [2] refers to first field and second field. 😉
 
