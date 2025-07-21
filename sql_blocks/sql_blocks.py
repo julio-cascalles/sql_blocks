@@ -2194,10 +2194,10 @@ class Recursive(CTE):
         return self
 
 
-MAIN_TAG = '__main__'
-
 class CTEFactory:
+    MAIN_TAG = '__main__'
     TEMPLATE_FIELD_FUNC = lambda t: t.lower()[:3] + '_id'
+    ALL_FIELDS = 'all_fields'
 
     def __init__(self, txt: str, template: str = ''):
         """
@@ -2211,35 +2211,32 @@ class CTEFactory:
         ---
         `cte_name`[
             Table1(field, `function$`field`:alias`, `group@`) <- Table2(field)
-        ]        
+        ]
         """
-        def put_parentheses():
-            result = txt
-            for found in re.findall(r'\[\d+\][^(]', result):
-                item = found.strip()[:3]
-                result = result.replace(item, f'{item}()')
-            return result
-        txt, *negative = re.split(r'(\[-\d+\])', txt)
-        txt = put_parentheses()
-        txt, *suffix = re.split(r'(\[\d+\])', txt, maxsplit=1)
+        NEGATIVE_MARK = '{last'
+        self.names = {}
         if template:
             for table in re.findall(r'[#](\w+)', txt):
                 txt = txt.replace( f'#{table}', template.format(
                     t=table, f=CTEFactory.TEMPLATE_FIELD_FUNC(table)
                 ) )
+        txt = self.replace_wildcards(txt)
         self.cte_list = []
         self.main = None
-        for script in txt.split(']'):
-            if '(' not in script:
-                script += self.replace_wildcards(''.join(suffix))
-                suffix = []
+        script_list = txt.split(']')
+        is_negative = False
+        for i, script in enumerate(script_list, 1):            
+            if '{' in script:
+                is_negative = NEGATIVE_MARK in script
+                script = script.format(**self.names) 
+            if i == len(script_list) and is_negative:
+                break
             self.build_ctes(script)
+            self.fill_names()
         if not self.cte_list:
             return
-        if not suffix and negative:
-            suffix = negative
-        if suffix:
-            self.main = detect( self.replace_wildcards(''.join(suffix)) )
+        if is_negative:
+            self.main = detect(script)
         elif not self.main:
             self.main = Select(self.cte_list[-1].table_name)
             self.main.break_lines = False
@@ -2262,7 +2259,7 @@ class CTEFactory:
             self.cte_list += [CTE(alias, query_list)]
             return 
         summary = self.extract_subqueries(script)
-        self.main = detect( summary.pop(MAIN_TAG) )
+        self.main = detect( summary.pop(self.MAIN_TAG) )
         self.cte_list += [
             CTE(alias, [
                 Select.parse(query)[0]
@@ -2278,27 +2275,10 @@ class CTEFactory:
         lines = [str(cte) for cte in self.cte_list]
         result = ',\n'.join(lines) + '\n' + str(self.main)
         CTE.show_query = True
-        return result    
+        return result
     
-    def replace_wildcards(self, txt: str) -> str:
-        ALL_FIELDS_WILDCARD = '**'
-        result = ''
-        names = []
-        query_list = []
-        cte: CTE
-        for cte in self.cte_list:
-            names.append(cte.table_name)
-            query_list += cte.query_list
-        last = 0
-        for found in re.finditer(r'\[[-]*\d+\]', txt):
-            pos = int(re.sub(r'\[|\]', '', found.group()))
-            if pos > 0:
-                pos -= 1
-            start = found.start()
-            result += txt[last:start] + names[pos]
-            last = found.end()
-        txt = result + txt[last:]
-        if ALL_FIELDS_WILDCARD in txt:
+    def fill_names(self):
+        def get_field_list(query_list) -> list:
             field_list = []
             for query in query_list:
                 for field in query.values.get(SELECT, []):
@@ -2307,13 +2287,57 @@ class CTEFactory:
                     )[-1].strip()
                     if new_item not in field_list:
                         field_list.append(new_item)
-            return txt.replace(ALL_FIELDS_WILDCARD, '{}'.format(
-                ','.join(field_list)
-            ))
-        return txt
+            return field_list
+        query_list = []
+        cte: CTE
+        for i, cte in enumerate(self.cte_list):
+            name = f'tag{i+1}'
+            if name in self.names and self.names[name].startswith('{'):
+                self.names[name] = cte.table_name
+            negative_pos = abs( len(self.cte_list) - i )
+            name = f'last{negative_pos}'
+            if name in self.names:
+                self.names[name] = cte.table_name
+            query_list += cte.query_list
+        if self.ALL_FIELDS in self.names:
+            self.names[self.ALL_FIELDS] = ','.join( get_field_list(query_list) )
+    
+    def replace_wildcards(self, txt: str) -> str:
+        # ----------------------------------------------------
+        def has_parentheses(patch: str) -> bool:
+            return re.sub(r'\s+', '', patch).startswith('(')
+        # ----------------------------------------------------
+        result = ''
+        end = 0
+        for found in re.finditer(r'(\[[-]*\d+\])|([*][*])', txt):
+            start = found.start()
+            content = found.group()
+            if content == '**':
+                tag_id = self.ALL_FIELDS
+            else:
+                value = int( content[1:-1] )
+                if value < 0:
+                    prefix = 'last'
+                    value = -value
+                else:
+                    prefix = 'tag'
+                tag_id = f'{prefix}{value}'
+            mark = '{' + tag_id + '}'
+            if tag_id not in self.names:
+                self.names[tag_id] = mark
+            result += '{}{}'.format(
+                txt[end:start], mark
+            )
+            end = found.end()
+            if not has_parentheses(txt[end:]):
+                result += '()'
+        if not result:
+            return txt
+        result += txt[end:]
+        return result
 
-    @staticmethod
-    def extract_subqueries(txt: str) -> dict:        
+    @classmethod
+    def extract_subqueries(cls, txt: str) -> dict:        
         result = {}
         # ---------------------------------------------------
         def clean_subquery(source: list) -> str:
@@ -2322,7 +2346,7 @@ class CTEFactory:
                     break
                 word = source.pop(0)
                 if word.upper() in ('FROM', 'JOIN'):
-                    result[MAIN_TAG] += f' {word}'
+                    result[cls.MAIN_TAG] += f' {word}'
             return ' '.join(source)
         def balanced_parentheses(expr: str) -> bool:
             return expr.count('(') == expr.count(')')
@@ -2343,16 +2367,16 @@ class CTEFactory:
                     end = pos
                 pos = end
             if not result:
-                result[MAIN_TAG] = txt[:start]
+                result[cls.MAIN_TAG] = txt[:start]
             query_list = [
                 clean_subquery( expr.split() )
                 for expr in  re.split(
                     r'\bUNION\b', txt[start: end], flags=re.IGNORECASE
                 )
             ]
-            result[MAIN_TAG] += f' {alias} {alias}'
+            result[cls.MAIN_TAG] += f' {alias} {alias}'
             result[alias] = query_list
-        result[MAIN_TAG] += txt[last:]
+        result[cls.MAIN_TAG] += txt[last:]
         return result
 
 
@@ -2504,3 +2528,31 @@ def detect(text: str, join_method = join_queries, format: str='') -> Select | li
 # ===========================================================================================//
 
 
+if __name__ == '__main__':
+    cte = CTEFactory(
+        txt='''
+            ClienteMaisRecente[
+            Pedidos(cliente_id@, ^max$dataPedido:ultimoPedido)
+            ]
+            PedidosMaisRecentes[
+                [1](cliente_id*) <- Pedidos(cliente_id)
+            ]
+
+            [-1](**)
+        '''
+    )
+    print(cte)
+    # --------------------------------------------------------------------------
+    # print(  CTEFactory(
+    #     txt='''
+    #         #Empregado #Cliente #Fornecedor
+    #         Todas_as_pessoas[[1]     [2]     [3]]
+    #         [-1](**, ano*) <- Meta(ano, qt_ideal)
+    #     ''',
+    #     template='''
+    #         Vendas_por_{t}[
+    #             Vendas(year$data:ano@, sum$quantidade:qt_vendida,
+    #             {f}) -> {t}(id, nome:nome_pessoa@)
+    #         ]
+    #     '''
+    # )  )
