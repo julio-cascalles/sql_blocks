@@ -149,7 +149,7 @@ class SQLObject:
     def delete(self, search: str, keys: list=USUAL_KEYS, exact: bool=False):
         search = re.escape(search)
         if exact:
-            not_match = lambda item: not re.search(fr'\w*[.]*{search}$', item)
+            not_match = lambda item: not re.search(fr'([^\w+]|[^_]){search}$', item)
         else:
             not_match = lambda item: search not in item
         for key in keys:
@@ -1648,7 +1648,7 @@ class CypherParser(Parser):
 
     def prepare(self):
         self.REGEX['separator'] = re.compile(fr'({self.CHAR_SET}|->|<-|{self.KEYWORDS})')
-        self.REGEX['condition'] = re.compile(r'(^\w+)|([<>=])')
+        self.REGEX['condition'] = re.compile(r'(\w+)(\s*[<>=]+\s*["\']*[\d+|\w+|\+\-\*\/]*["\']*)')
         self.REGEX['alias_pos'] = re.compile(r'(\w+)[.](\w+)')
         self.join_type = JoinType.INNER
         self.TOKEN_METHODS = {
@@ -2527,32 +2527,3 @@ def detect(text: str, join_method = join_queries, format: str='') -> Select | li
     return result
 # ===========================================================================================//
 
-
-if __name__ == '__main__':
-    cte = CTEFactory(
-        txt='''
-            ClienteMaisRecente[
-            Pedidos(cliente_id@, ^max$dataPedido:ultimoPedido)
-            ]
-            PedidosMaisRecentes[
-                [1](cliente_id*) <- Pedidos(cliente_id)
-            ]
-
-            [-1](**)
-        '''
-    )
-    print(cte)
-    # --------------------------------------------------------------------------
-    # print(  CTEFactory(
-    #     txt='''
-    #         #Empregado #Cliente #Fornecedor
-    #         Todas_as_pessoas[[1]     [2]     [3]]
-    #         [-1](**, ano*) <- Meta(ano, qt_ideal)
-    #     ''',
-    #     template='''
-    #         Vendas_por_{t}[
-    #             Vendas(year$data:ano@, sum$quantidade:qt_vendida,
-    #             {f}) -> {t}(id, nome:nome_pessoa@)
-    #         ]
-    #     '''
-    # )  )
