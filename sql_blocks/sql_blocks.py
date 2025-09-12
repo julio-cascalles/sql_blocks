@@ -326,17 +326,18 @@ class Function(Code):
         return str(self)
 
     @classmethod
-    def list_all(cls) -> str:
+    def list_all(cls, function: callable = print):
         LINE_SEPARATOR = '-'*20
         children = [
             f.help() for f in Function.descendants()
         ]
         children.sort()
-        return """{}\n{}\n{}
-        """.format(
-            '='*20,
-            f"\n{LINE_SEPARATOR}\n".join(children),
-            '='*20,
+        function(
+            "{}\n{}\n{}".format(
+                '='*20,
+                f"\n{LINE_SEPARATOR}\n".join(children),
+                '='*20,
+            )
         )
 
 
