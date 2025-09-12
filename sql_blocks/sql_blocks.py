@@ -300,10 +300,11 @@ class Function(Code):
     def help(cls) -> str:
         descr = ' '.join(B.__name__ for B in cls.__bases__)
         params = cls.inputs or ''
+        docstring = cls.__doc__ if cls.__doc__ else ''
         return cls().get_pattern().format(
             func_name=f'{descr} {cls.__name__}',
             params=cls.separator.join(str(p) for p in params)
-        ) + f'  Return {cls.output}'
+        ) + f'  Return {cls.output}' + docstring
 
     def set_main_param(self, name: str, main: SQLObject) -> bool:
         nested_functions = [
@@ -324,10 +325,27 @@ class Function(Code):
             self.set_main_param(name, main)
         return str(self)
 
+    @classmethod
+    def list_all(cls) -> str:
+        LINE_SEPARATOR = '-'*20
+        children = [
+            f.help() for f in Function.descendants()
+        ]
+        children.sort()
+        return """{}\n{}\n{}
+        """.format(
+            '='*20,
+            f"\n{LINE_SEPARATOR}\n".join(children),
+            '='*20,
+        )
+
 
 
 # ---- String Functions: ---------------------------------
 class SubString(Function):
+    """
+    Extracts a portion of a string
+    """
     inputs = [CHAR, INT, INT]
     output = CHAR
 
@@ -338,15 +356,24 @@ class SubString(Function):
 
 # ---- Numeric Functions: --------------------------------
 class Round(Function):
-    inputs = [FLOAT]
+    """
+    Rounds a number to a specified number of decimal places
+    """
+    inputs = [FLOAT, INT]
     output = FLOAT
 
 class Trunc(Function):
+    """
+    Truncate a number to a integer precision
+    """
     inputs = [FLOAT]
-    output = FLOAT
+    output = INT
 
 # --- Date Functions: ------------------------------------
 class DateDiff(Function):
+    """
+    Returns the difference between two dates
+    """
     inputs = [DATE]
     output = DATE
     append_param = True
@@ -383,6 +410,11 @@ class DatePart(Function):
         if self.dialect in database_type:
             return database_type[self.dialect]
         return super().get_pattern()
+    
+    @classmethod
+    def help(cls):
+        result = super().help()
+        return result.replace('DatePart ', "Date Function ")
 
 class Year(DatePart):
     ...
@@ -442,36 +474,72 @@ class Window(Frame):
 
 # ---- Aggregate Functions: -------------------------------
 class Avg(Aggregate, Function):
+    """
+     Calculate the average (arithmetic mean) of a 
+    set of numeric values within a specified column
+    """
     ...
 class Min(Aggregate, Function):
+    """
+    Returns the smallest value of the selected column.
+    """
     ...
 class Max(Aggregate, Function):
+    """
+    Returns the largest value of the selected column.
+    """
     ...
 class Sum(Aggregate, Function):
     ...
 class Count(Aggregate, Function):
+    """
+    Return the number of rows that matches a specified criterion.
+    """
     ...
 
 # ---- Window Functions: -----------------------------------
 class Row_Number(Window, Function):
+    """
+    The sequential number of a row
+    within a partition of a result set.
+    """
     output = INT
 
 class Rank(Window, Function):
+    """
+     Assign a rank to each row within a result
+    set, based on a specified ordering of data.
+    """
     output = INT
 
 class Lag(Window, Function):
+    """
+     Allows for accessing data from a 
+    preceding row within the same result set.
+    """
     output = ANY
 
 class Lead(Window, Function):
+    """
+     Allows for accessing data from a 
+    subsequent row within the same result set.
+    """
     output = ANY
 
 
 # ---- Conversions and other Functions: ---------------------
 class Coalesce(Function):
+    """
+    Returns the first non-NULL expression
+    from a list of expressions.
+    """
     inputs = [ANY]
     output = ANY
     
 class Cast(Function):
+    """
+    Converts a value (of any type) into a specified datatype.
+    """
     inputs = [ANY]
     output = ANY
     separator = ' As '
@@ -1564,12 +1632,13 @@ class JoinType(Enum):
 
 class SQLParser(Parser):
     REGEX = {}
+    SUB_QUERIES_AS_CONDITIONS = True
 
     def prepare(self):
         keywords = '|'.join(k + r'\b' for k in KEYWORD)
         flags = re.IGNORECASE + re.MULTILINE
         self.REGEX['keywords'] = re.compile(f'({keywords})', flags)
-        self.REGEX['subquery'] = re.compile(r'(\w\.)*\w+ +in +\(SELECT.*?\)', flags)
+        self.REGEX['subquery'] = re.compile(r'(\w+[.])*\w+\s+in\s*[(]\s*SELECT\s+', flags)
 
     def eval(self, txt: str):
         def find_last_word(pos: int) -> int:
@@ -1584,22 +1653,27 @@ class SQLParser(Parser):
                     found.add(WORD)
                 elif txt[i] == '.':
                     found.remove(WORD)
-        def find_parenthesis(pos: int) -> int:
-            for i in range(pos, len(txt)-1):
-                if txt[i] == ')':
-                    return i+1
-        result = {}
+        def find_parenthesis(found) -> tuple:
+            start, end = found.span()
+            CHAR_VALUES = {
+                '(': +1,
+                ')': -1
+            }
+            remaining = 1
+            for i, char in enumerate(txt[end:]):
+                remaining += CHAR_VALUES.get(char, 0)
+                if char == ')' and not remaining:
+                    end += i
+                    break
+            return start, end
+        result, subqueries = {}, {}
         found = self.REGEX['subquery'].search(txt)
         while found:
-            start, end = found.span()
-            inner = txt[start: end]
-            if inner.count('(') > inner.count(')'):
-                end = find_parenthesis(end)
-                inner = txt[start: end-1]
-            fld, *inner = re.split(r' IN | in', inner, maxsplit=1)
+            start, end = find_parenthesis(found)
+            fld, _, *inner = re.split(r'\s+(in|IN)\s+', txt[start: end], maxsplit=1)
             if fld.upper() == 'NOT':
                 pos = find_last_word(start)
-                fld = txt[pos: start].strip() # [To-Do] Use the value of `fld`
+                fld = txt[pos: start].strip()
                 start = pos
                 target_class = NotSelectIN
             else:
@@ -1608,7 +1682,12 @@ class SQLParser(Parser):
                 ' '.join(re.sub(r'^\(', '', s.strip()) for s in inner),
                 class_type=target_class
             ).queries[0]
-            result[obj.alias] = obj
+            if self.SUB_QUERIES_AS_CONDITIONS:
+                *alias, fld = fld.split('.')
+                alias = '' if not alias else alias[0]
+                subqueries.setdefault(alias, {})[fld] = obj
+            else:
+                result[obj.alias] = obj
             txt = txt[:start-1] + txt[end+1:]
             found = self.REGEX['subquery'].search(txt)
         tokens = [t.strip() for t in self.REGEX['keywords'].split(txt) if t.strip()]
@@ -1634,6 +1713,8 @@ class SQLParser(Parser):
                         for fld in self.class_type.split_fields(values[key], key)
                         if (fld != '*' and len(tables) == 1) or obj.match(fld, key)
                     ]
+                if obj.alias in subqueries:
+                    obj.__call__(**subqueries[obj.alias])                    
                 result[obj.alias] = obj
         self.queries = list( result.values() )
 
@@ -2527,3 +2608,22 @@ def detect(text: str, join_method = join_queries, format: str='') -> Select | li
     return result
 # ===========================================================================================//
 
+if __name__ == "__main__":
+    print(
+        CTEFactory("""
+        SELECT u001.nome, agg_vendas.total
+        FROM (
+            SELECT * FROM usuarios u
+            WHERE u.id IN (
+                select user_id FROM Avaliacao
+                GROUP By user_id HAVING Avg(nota) > 6.5
+                WHERE dt_ref BETWEEN '2024-12-01' AND '2025-01-31'              
+            )
+        ) AS u001
+        JOIN (
+            SELECT v.user_id, Sum(v.valor) as total
+            FROM vendas v GROUP BY v.user_id
+        ) AS agg_vendas ON u001.id = agg_vendas.user_id
+        WHERE u001.comissao < agg_vendas.total ORDER BY u001.nome
+        """)
+    )

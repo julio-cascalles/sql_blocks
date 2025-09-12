@@ -107,7 +107,9 @@ def select_product() -> Select:
     )
 
 def extract_subqueries() -> dict:
+    SQLParser.SUB_QUERIES_AS_CONDITIONS = False
     query_list = single_text_to_objects(SUB_QUERIES_CONDITIONS)
+    SQLParser.SUB_QUERIES_AS_CONDITIONS = True
     return {query.table_name: query for query in query_list}
 
 DATE_FUNC = 'extract(year from %)'
