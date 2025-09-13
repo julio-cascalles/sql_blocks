@@ -306,7 +306,7 @@ class Function(Code):
             params=cls.separator.join(str(p) for p in params)
         ) + f'  Return {cls.output}' + docstring
 
-    def set_main_param(self, name: str, main: SQLObject) -> bool:
+    def set_main_param(self, name: str, main: SQLObject):
         nested_functions = [
             param for param in self.params if isinstance(param, Function)
         ]
@@ -411,6 +411,12 @@ class DatePart(Function):
         if self.dialect in database_type:
             return database_type[self.dialect]
         return super().get_pattern()
+
+    def set_main_param(self, name: str, main: SQLObject):
+        if self.params:
+            self.As(name)
+            name = self.params.pop(0)
+        super().set_main_param(name, main)
     
     @classmethod
     def help(cls):
@@ -2610,21 +2616,8 @@ def detect(text: str, join_method = join_queries, format: str='') -> Select | li
 # ===========================================================================================//
 
 if __name__ == "__main__":
-    print(
-        CTEFactory("""
-        SELECT u001.nome, agg_vendas.total
-        FROM (
-            SELECT * FROM usuarios u
-            WHERE u.id IN (
-                select user_id FROM Avaliacao
-                GROUP By user_id HAVING Avg(nota) > 6.5
-                WHERE dt_ref BETWEEN '2024-12-01' AND '2025-01-31'              
-            )
-        ) AS u001
-        JOIN (
-            SELECT v.user_id, Sum(v.valor) as total
-            FROM vendas v GROUP BY v.user_id
-        ) AS agg_vendas ON u001.id = agg_vendas.user_id
-        WHERE u001.comissao < agg_vendas.total ORDER BY u001.nome
-        """)
-    )
+    q1 = Select('Sales', ref_date=Year().As('ref_year'))
+    print(q1)
+    print('-'*50)
+    q2 = Select('Sales', ref_year=Year('ref_date'))
+    print(q2)
