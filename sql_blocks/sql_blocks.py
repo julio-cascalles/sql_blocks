@@ -314,6 +314,11 @@ class Function(Code):
             if func.inputs:
                 func.set_main_param(name, main)
                 return
+        if 0 < len(self.params) >= len(self.inputs) and Ellipsis not in self.inputs:
+            self.As(name)
+            if not isinstance(self.params[0], str):
+                return
+            name = self.params.pop(0)
         new_params = [Field.format(name, main)]
         if self.append_param:
             self.params += new_params
@@ -375,7 +380,7 @@ class DateDiff(Function):
     """
     Returns the difference between two dates
     """
-    inputs = [DATE]
+    inputs = [DATE, DATE]
     output = DATE
     append_param = True
 
@@ -412,12 +417,6 @@ class DatePart(Function):
             return database_type[self.dialect]
         return super().get_pattern()
 
-    def set_main_param(self, name: str, main: SQLObject):
-        if self.params:
-            self.As(name)
-            name = self.params.pop(0)
-        super().set_main_param(name, main)
-    
     @classmethod
     def help(cls):
         result = super().help()
@@ -2616,8 +2615,10 @@ def detect(text: str, join_method = join_queries, format: str='') -> Select | li
 # ===========================================================================================//
 
 if __name__ == "__main__":
-    q1 = Select('Sales', ref_date=Year().As('ref_year'))
-    print(q1)
-    print('-'*50)
-    q2 = Select('Sales', ref_year=Year('ref_date'))
-    print(q2)
+    Function.dialect = Dialect.SQL_SERVER
+    query = Select(
+        'Person p',
+        birth=Round( DateDiff(Current_Date()) ).As('age'),
+        # age=Round( DateDiff(Current_Date(), 'birth') )
+    )
+    print(query)
