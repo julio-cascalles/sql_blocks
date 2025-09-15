@@ -263,6 +263,7 @@ class Function(Code):
     append_param = False
 
     def __init__(self, *params: list):
+        # ----------------------------------------
         def set_func_types(param):
             if self.auto_convert and isinstance(param, Function):
                 func = param
@@ -275,6 +276,7 @@ class Function(Code):
                 if unfriendly:
                     return Cast(func, main_param)
             return param
+        # ----------------------------------------
         self.params = [set_func_types(p) for p in params]
         self.pattern = self.get_pattern()
         super().__init__()
@@ -306,26 +308,40 @@ class Function(Code):
             params=cls.separator.join(str(p) for p in params)
         ) + f'  Return {cls.output}' + docstring
 
-    def set_main_param(self, name: str, main: SQLObject):
-        nested_functions = [
-            param for param in self.params if isinstance(param, Function)
-        ]
-        for func in nested_functions:
-            if func.inputs:
-                func.set_main_param(name, main)
-                return
+    def set_main_param(self, name: str, main: SQLObject, root: 'Function'=None) -> bool:
+        map = {
+            Function: [],
+            str: []
+        }
+        for i, param in enumerate(self.params):
+            for ptype in map:
+                if isinstance(param, ptype):
+                    map[ptype].append(i)
+        if not root:
+            root = self
+        for i in map[Function]:
+            func = self.params[i]
+            if not func.inputs:
+                continue
+            if func.set_main_param(name, main, root):
+                return True
         if 0 < len(self.params) >= len(self.inputs) and Ellipsis not in self.inputs:
-            self.As(name)
-            if not isinstance(self.params[0], str):
-                return
-            name = self.params.pop(0)
+            root.As(name)
+            if not map[str]:
+                return False
+            i = map[str][0]
+            name = self.params.pop(i)
         new_params = [Field.format(name, main)]
         if self.append_param:
             self.params += new_params
         else:
-            self.params = new_params + self.params         
+            self.params = new_params + self.params
+        return True
 
     def format(self, name: str, main: SQLObject) -> str:
+        if isinstance(self, Frame) and Partition.params:
+            self.over(**Partition.params)
+            Partition.params = None
         if name not in '*_':
             self.set_main_param(name, main)
         return str(self)
@@ -454,12 +470,7 @@ class Frame:
         """
         keywords = ''
         for field, obj in args.items():
-            is_valid = any([
-                obj is OrderBy, obj is DescOrderBy,
-                obj is Partition,
-                isinstance(obj, Rows),
-            ])
-            if not is_valid:
+            if not hasattr(obj, "cls_to_str"):
                 continue
             keywords += '{}{}'.format(
                 '\n\t\t' if self.break_lines else ' ',
@@ -582,7 +593,7 @@ class FieldList:
                 f.strip() for f in fields.split(self.separator)
             ]
         self.fields = fields
-        self.class_types = class_types
+        self.class_types = TO_LIST(class_types)
         self.ziped = ziped
 
     def add(self, name: str, main: SQLObject):
@@ -1036,9 +1047,18 @@ class OrderBy(Clause):
         return f"{ORDER_BY} {field}{cls.sort.value}"
 
 class Partition:
+    params = None
+
     @classmethod
     def cls_to_str(cls, field: str) -> str:
         return f'PARTITION BY {field}'
+    
+    def __init__(self, content):
+        self.content = content
+
+    def add(self, name: str, main: SQLObject):
+        Partition.params = {name: Partition}  # <=== class variable!
+        self.content.add(name, main)
 
 
 class GroupBy(Clause):
@@ -2615,10 +2635,20 @@ def detect(text: str, join_method = join_queries, format: str='') -> Select | li
 # ===========================================================================================//
 
 if __name__ == "__main__":
-    Function.dialect = Dialect.SQL_SERVER
-    query = Select(
-        'Person p',
-        birth=Round( DateDiff(Current_Date()) ).As('age'),
-        # age=Round( DateDiff(Current_Date(), 'birth') )
+    TABLE_NAME = 'Sales s'
+    DATE_FIELD = 'ref_date'
+    print('▒'*50)
+    q1 = Select(
+        TABLE_NAME, 
+        ref_year=Year(DATE_FIELD),
+        price=Sum().As('total').over(ref_year=Partition)
     )
-    print(query)
+    print(q1)
+    print('='*50)
+    q2 = Select(
+        TABLE_NAME, 
+        ref_year=Partition( Year(DATE_FIELD) ),
+        total=Sum('price'),
+    )
+    print(q2)
+    print('▒'*50)
