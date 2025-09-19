@@ -569,6 +569,7 @@ ORDER BY
 * `->` connects to the table on the right
 * `^` Put the field in the ORDER BY clause
 * `@` Immediately after the table/field name, it indicates the grouping field.
+* `|` Immediately after the table name, it indicates the PARTITION expression;
 * `$` For SQL functions like **avg**$_field_, **sum**$_field_, **count**$_field_...
 * `*` Sets the primary key field.
 * `:` Allows you to assign an alias to the field or expression.

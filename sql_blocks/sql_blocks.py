@@ -22,7 +22,7 @@ KEYWORD = {
 
 SELECT, FROM, WHERE, GROUP_BY, ORDER_BY, LIMIT = KEYWORD.keys()
 USUAL_KEYS = [SELECT, WHERE, GROUP_BY, ORDER_BY, LIMIT]
-TO_LIST = lambda x: x if isinstance(x, list) else [x]
+TO_LIST = lambda x: x if isinstance(x, list) else [] if x is None else [x]
 
 
 class SQLObject:
@@ -1048,17 +1048,21 @@ class OrderBy(Clause):
 
 class Partition:
     params = None
+    content = None
 
     @classmethod
     def cls_to_str(cls, field: str) -> str:
         return f'PARTITION BY {field}'
     
     def __init__(self, content):
-        self.content = content
+        Partition.content = content
 
-    def add(self, name: str, main: SQLObject):
-        Partition.params = {name: Partition}  # <=== class variable!
-        self.content.add(name, main)
+    @classmethod
+    def add(cls, name: str, main: SQLObject):
+        cls.params = {name: Partition}
+        if cls.content:
+            cls.content.add(name, main)
+        cls.content = None
 
 
 class GroupBy(Clause):
@@ -1768,7 +1772,7 @@ class CypherParser(Parser):
         self.aliases = {}
 
     def new_query(self, token: str, join_type = JoinType.INNER, alias: str=''):
-        token, *group_fields = token.split('@')
+        token, *more = re.split(r"([|@])", token)
         if not token.isidentifier():
             return
         table_name = f'{token} {alias}' if alias else token
@@ -1777,7 +1781,11 @@ class CypherParser(Parser):
             alias = query.alias
         self.queries.append(query)
         self.aliases[alias] = query
-        FieldList(group_fields, [Field, GroupBy]).add('', query)
+        if more:
+            for sep, expr in zip(more[::2], more[1::2]):
+                class_type = {'@': GroupBy, '|': Partition}[sep]
+                self.add_field(expr, [class_type])
+            # FieldList(more, [Field, GroupBy]).add('', query)
         query.join_type = join_type
 
     def add_where(self, token: str):
@@ -1793,9 +1801,9 @@ class CypherParser(Parser):
         Where(' '.join(condition)).add(field, query)
     
     def add_order(self, token: str):
-        self.add_field(token, sorted=True)
+        self.add_field(token, [OrderBy])
 
-    def add_field(self, token: str, sorted: bool = False):
+    def add_field(self, token: str, class_types: list = []):
         if token in self.TOKEN_METHODS:
             return
         if '*' in token:
@@ -1823,7 +1831,7 @@ class CypherParser(Parser):
             is_count = function == 'count'
             if alias or is_count:
                 field, alias = alias, field
-            extra_classes = [OrderBy] if sorted else []
+            extra_classes = class_types
             if group:
                 if not field:
                     field = group
@@ -1833,10 +1841,10 @@ class CypherParser(Parser):
             if function:                
                 if is_count and not field:
                     field = self.queries[-1].key_field or 'id'
-                class_type = FUNCTION_CLASS.get(function)
-                if not class_type:
+                func_class = FUNCTION_CLASS.get(function)
+                if not func_class:
                     raise ValueError(f'Unknown function `{function}`.')
-                class_list = [ class_type().As(alias, extra_classes) ]
+                class_list = [ func_class().As(alias, extra_classes) ]
             elif alias:
                 class_list = [NamedField(alias)] + extra_classes
             else:
@@ -2192,9 +2200,10 @@ class Select(SQLObject):
             rule.apply(self)
 
     def add_fields(self, fields: list, class_types=None):
-        if not class_types:
-            class_types = []
-        class_types += [Field]
+        class_types = TO_LIST(class_types)
+        has_partition = any(isinstance(cls, Partition) for cls in class_types)
+        if not has_partition:
+            class_types += [Field]
         FieldList(fields, class_types).add('', self)
 
     def translate_to(self, language: QueryLanguage) -> str:
@@ -2635,20 +2644,37 @@ def detect(text: str, join_method = join_queries, format: str='') -> Select | li
 # ===========================================================================================//
 
 if __name__ == "__main__":
-    TABLE_NAME = 'Sales s'
+    SQLObject.ALIAS_FUNC = lambda t: t[0].lower()
+    TABLE_NAME = 'Sales'
     DATE_FIELD = 'ref_date'
-    print('▒'*50)
+    DATE_ALIAS = 'ref_year'
+    FLOAT_FIELD = 'price'
+    FLOAT_ALIAS = 'total'
+    print(' Integrity test... '.center(50, '▒'))
     q1 = Select(
         TABLE_NAME, 
         ref_year=Year(DATE_FIELD),
-        price=Sum().As('total').over(ref_year=Partition)
+        price=Sum().As(FLOAT_ALIAS).over(ref_year=Partition)
     )
-    print(q1)
-    print('='*50)
     q2 = Select(
         TABLE_NAME, 
         ref_year=Partition( Year(DATE_FIELD) ),
-        total=Sum('price'),
+        total=Sum(FLOAT_FIELD),
     )
-    print(q2)
-    print('▒'*50)
+    q3 = Select(TABLE_NAME)
+    q3.add_fields(DATE_ALIAS, Partition( Year(DATE_FIELD) ))
+    q3(
+        total=Sum(FLOAT_FIELD)
+    )
+    q4 = detect(
+        f"{TABLE_NAME}|year${DATE_FIELD}:{DATE_ALIAS}(sum${FLOAT_FIELD}:{FLOAT_ALIAS})"
+    )
+    query_list = [q1, q2, q3, q4]
+    for i, a in enumerate(query_list, 1):
+        for j, b in enumerate(query_list, 1):
+            if i == j:
+                continue
+            print(f"q{i} == q{j}: ", end='')
+            assert a == b
+            print('...OK!')
+    print(' SUCCESS! '.center(50, '▒'))
