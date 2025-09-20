@@ -896,11 +896,14 @@ class If(Code, Frame):
         Case.quoted_result = False
         _case = Case(self.field).when(self.condition).then(name).else_value(0)
         Case.quoted_result = quoted_result
-        return '{func}({param}){over}'.format(
-            func=self.func_class.__name__,
-            param=_case.format('', main),
-            over=self.pattern
-        )
+        return self.func_class(
+            _case.format('', main)
+        ).format(name, main)
+        # return '{func}({param}){over}'.format(
+        #     func=self.func_class.__name__,
+        #     param=_case.format('', main),
+        #     over=self.pattern
+        # )
     
     def get_pattern(self) -> str:
         return ''
@@ -915,6 +918,8 @@ class Pivot:
         self.result = str(result)
 
     def add(self, name: str, main: 'Select'):
+        partition_params = Partition.params
+        Partition.params = None
         for value in self.values:
             if isinstance(value, (tuple, list)):
                 value, label = value
@@ -924,6 +929,7 @@ class Pivot:
                 name, self.func_class,
                 self.where_method(value)
             ).As(label).add(self.result, main)
+        Partition.params = partition_params
 
 
 class Options:
@@ -2670,9 +2676,11 @@ def detect(text: str, join_method = join_queries, format: str='') -> Select | li
 if __name__ == "__main__":
     query = Select(
         'Sales s',
+        ref_year=Partition( Year('ref_date') ),
         month=Pivot([
             (1, 'jan'), (2, 'feb'), (3, 'mar'), 
-        ], 1, Avg)
-        # region=Pivot(['north', 'south', 'east', 'west'], 'price')
+        ], 5, Avg),
+        # region=Pivot(['north', 'south', 'east', 'west'], 'price'),
+        tax=If('days_late > 0', Sum).As('penalty')
     )
     print(query)
