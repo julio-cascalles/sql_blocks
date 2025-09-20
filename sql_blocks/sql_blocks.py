@@ -774,6 +774,7 @@ class Not(Where):
 
 class Case:
     break_lines = True
+    quoted_result: bool = True
 
     def __init__(self, field: str):
         self.__conditions = {}
@@ -782,18 +783,13 @@ class Case:
         self.current_condition = None
         self.fields = []
 
-    def when(self, condition: Where, result=None):
+    def when(self, condition: Where):
         self.current_condition = condition
-        if result is None:            
-            return self
-        return self.then(result)
+        return self
     
     def then(self, result):
-        if isinstance(result, str):
-            if result.startswith('='):
-                result = result[1:]
-            else:
-                result = quoted(result)
+        if self.quoted_result:
+            result = quoted(result)
         self.__conditions[result] = self.current_condition
         return self
     
@@ -803,7 +799,11 @@ class Case:
         self.default = default
         return self
     
-    def format(self, name: str, field: str='') -> str:
+    def format(self, name: str, main:SQLObject, field: str='') -> str:
+        def put_alias(s: str) -> str:
+            is_quoted = re.search(r'[\'"]', s)
+            no_alias = (is_quoted or not main)
+            return s if no_alias else Field.format(s, main)
         TABULATION = '\t\t' if self.break_lines else ' '
         LINE_BREAK = '\n' if self.break_lines else ' '
         default = self.default
@@ -812,7 +812,7 @@ class Case:
         return 'CASE{brk}{cond}{df}{tab}END{alias}'.format(
             brk=LINE_BREAK,
             cond=LINE_BREAK.join(
-                f'{TABULATION}WHEN {field} {cond.content} THEN {res}'
+                f'{TABULATION}WHEN {put_alias(field)} {cond.content} THEN {put_alias(res)}'
                 for res, cond in self.__conditions.items()
             ),
             df=f'{LINE_BREAK}{TABULATION}ELSE {default}' if not default is None else '',
@@ -821,12 +821,12 @@ class Case:
         )
     
     def __str__(self):
-        return self.format('', self.field)
+        return self.format('', None, self.field)
 
     def add(self, name: str, main: SQLObject):
         main.values.setdefault(SELECT, []).append(
             self.format(
-                name, Field.format(self.field, main)
+                name, main, Field.format(self.field, main)
             )
         )
 
@@ -892,14 +892,34 @@ class If(Code, Frame):
         super().__init__()
 
     def format(self, name: str, main: SQLObject) -> str:
+        quoted_result = Case.quoted_result
+        Case.quoted_result = False
+        _case = Case(self.field).when(self.condition).then(name).else_value(0)
+        Case.quoted_result = quoted_result
         return '{func}({param}){over}'.format(
             func=self.func_class.__name__,
-            param=Case(self.field).when(self.condition, f'={name}').else_value(0),
+            param=_case.format('', main),
             over=self.pattern
         )
     
     def get_pattern(self) -> str:
         return ''
+
+
+class Pivot:
+    where_method = Where.eq
+
+    def __init__(self, values: list, func_class: Function, field: str):
+        self.values = values
+        self.func_class = func_class
+        self.field = field
+
+    def add(self, name: str, main: 'Select'):
+        for value in self.values:
+            If(
+                name, self.func_class,
+                self.where_method(value)
+            ).As(value).add(self.field, main)
 
 
 class Options:
@@ -2644,37 +2664,8 @@ def detect(text: str, join_method = join_queries, format: str='') -> Select | li
 # ===========================================================================================//
 
 if __name__ == "__main__":
-    SQLObject.ALIAS_FUNC = lambda t: t[0].lower()
-    TABLE_NAME = 'Sales'
-    DATE_FIELD = 'ref_date'
-    DATE_ALIAS = 'ref_year'
-    FLOAT_FIELD = 'price'
-    FLOAT_ALIAS = 'total'
-    print(' Integrity test... '.center(50, '▒'))
-    q1 = Select(
-        TABLE_NAME, 
-        ref_year=Year(DATE_FIELD),
-        price=Sum().As(FLOAT_ALIAS).over(ref_year=Partition)
+    query = Select(
+        'Sales s',
+        region=Pivot(['north', 'south', 'east', 'west'], Sum, 'price')
     )
-    q2 = Select(
-        TABLE_NAME, 
-        ref_year=Partition( Year(DATE_FIELD) ),
-        total=Sum(FLOAT_FIELD),
-    )
-    q3 = Select(TABLE_NAME)
-    q3.add_fields(DATE_ALIAS, Partition( Year(DATE_FIELD) ))
-    q3(
-        total=Sum(FLOAT_FIELD)
-    )
-    q4 = detect(
-        f"{TABLE_NAME}|year${DATE_FIELD}:{DATE_ALIAS}(sum${FLOAT_FIELD}:{FLOAT_ALIAS})"
-    )
-    query_list = [q1, q2, q3, q4]
-    for i, a in enumerate(query_list, 1):
-        for j, b in enumerate(query_list, 1):
-            if i == j:
-                continue
-            print(f"q{i} == q{j}: ", end='')
-            assert a == b
-            print('...OK!')
-    print(' SUCCESS! '.center(50, '▒'))
+    print(query)
