@@ -909,17 +909,21 @@ class If(Code, Frame):
 class Pivot:
     where_method = Where.eq
 
-    def __init__(self, values: list, func_class: Function, field: str):
+    def __init__(self, values: list, result: str, func_class: Function=Sum):
         self.values = values
         self.func_class = func_class
-        self.field = field
+        self.result = str(result)
 
     def add(self, name: str, main: 'Select'):
         for value in self.values:
+            if isinstance(value, (tuple, list)):
+                value, label = value
+            else:
+                label = value
             If(
                 name, self.func_class,
                 self.where_method(value)
-            ).As(value).add(self.field, main)
+            ).As(label).add(self.result, main)
 
 
 class Options:
@@ -975,8 +979,8 @@ class Range(Case):
         cls = self.__class__
         for label, value in sorted(values.items(), key=lambda item: item[1]):
             self.when(
-                Between(start, value).literal(), label
-            )
+                Between(start, value).literal()
+            ).then(label)
             start = cls.INC_FUNCTION(value)
 
 
@@ -2666,6 +2670,9 @@ def detect(text: str, join_method = join_queries, format: str='') -> Select | li
 if __name__ == "__main__":
     query = Select(
         'Sales s',
-        region=Pivot(['north', 'south', 'east', 'west'], Sum, 'price')
+        month=Pivot([
+            (1, 'jan'), (2, 'feb'), (3, 'mar'), 
+        ], 1, Avg)
+        # region=Pivot(['north', 'south', 'east', 'west'], 'price')
     )
     print(query)

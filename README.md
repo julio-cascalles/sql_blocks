@@ -449,6 +449,66 @@ FROM
         Emprestimo
 ```
 
+* 10.3 `Pivot` class
+
+Transforms rows into columns depending on their values 
+
+**Example**
+
+    query = Select(
+            'Sales s',
+            region=Pivot(['north', 'south', 'east', 'west'], 'price')
+    )
+...is equals to...
+```
+SELECT
+        Sum(CASE
+                WHEN s.region = 'north' THEN s.price
+                ELSE 0
+        END) as north,
+        Sum(CASE
+                WHEN s.region = 'south' THEN s.price
+                ELSE 0
+        END) as south,
+        Sum(CASE
+                WHEN s.region = 'east' THEN s.price
+                ELSE 0
+        END) as east,
+        Sum(CASE
+                WHEN s.region = 'west' THEN s.price
+                ELSE 0
+        END) as west
+FROM
+        Sales s
+```
+**another way**
+
+        query = Select(
+            'Sales s',
+            month=Pivot([
+                (1, 'jan'), (2, 'feb'), (3, 'mar'), 
+            ], 1, Avg)
+        )
+...
+
+```
+SELECT
+        Avg(CASE
+                WHEN s.month = 1 THEN 1
+                ELSE 0
+        END) as jan,
+        Avg(CASE
+                WHEN s.month = 2 THEN 1
+                ELSE 0
+        END) as feb,
+        Avg(CASE
+                WHEN s.month = 3 THEN 1
+                ELSE 0
+        END) as mar
+FROM
+        Sales s
+```
+
 ---
 
 ### 11 - optimize method
