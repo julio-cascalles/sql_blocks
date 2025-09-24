@@ -142,6 +142,7 @@ def compare_query_list() -> bool:
     return all(len(c.query_list) == 2 for c in ctes)
 
 def cte_factory_cypher_results() -> list:
+    # CTEFactory.TEMPLATE_FIELD_FUNC
     cte = CTEFactory(
         txt='''
             #Employee #Customer #Supplier

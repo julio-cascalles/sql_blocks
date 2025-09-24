@@ -1833,7 +1833,7 @@ class CypherParser(Parser):
     def add_order(self, token: str):
         self.add_field(token, [OrderBy])
 
-    def add_field(self, token: str, class_types: list = []):
+    def add_field(self, token: str, class_types: list = None):
         if token in self.TOKEN_METHODS:
             return
         if '*' in token:
@@ -1861,7 +1861,7 @@ class CypherParser(Parser):
             is_count = function == 'count'
             if alias or is_count:
                 field, alias = alias, field
-            extra_classes = class_types
+            extra_classes = class_types or []
             if group:
                 if not field:
                     field = group
@@ -1893,6 +1893,14 @@ class CypherParser(Parser):
         self.new_query(token, JoinType.RIGHT)
 
     def add_foreign_key(self, token: str, pk_field: str=''):
+        def extract_field(query: Select, pos: int) -> str:
+            fields = [
+                fld for fld in query.values[SELECT]
+                if fld not in query.values.get(GROUP_BY, [])
+            ]
+            result  = fields[pos].split('.')[-1]
+            query.delete(result, [SELECT], exact=True)
+            return result
         curr, last = [self.queries[i] for i in (-1, -2)]
         if not pk_field:
             if last.key_field:
@@ -1900,8 +1908,7 @@ class CypherParser(Parser):
             else:
                 if not last.values.get(SELECT):
                     raise IndexError(f'Primary Key not found for {last.table_name}.')
-                pk_field = last.values[SELECT][-1].split('.')[-1]
-                last.delete(pk_field, [SELECT], exact=True)
+                pk_field = extract_field(last, -1)
         if '{}' in token:
             foreign_fld = token.format(
                 last.table_name.lower()
@@ -1911,12 +1918,7 @@ class CypherParser(Parser):
         else:
             if not curr.values.get(SELECT):
                 raise IndexError(f'Foreign Key not found for {curr.table_name}.')
-            fields = [
-                fld for fld in curr.values[SELECT]
-                if fld not in curr.values.get(GROUP_BY, [])
-            ]
-            foreign_fld = fields[0].split('.')[-1]
-            curr.delete(foreign_fld, [SELECT], exact=True)
+            foreign_fld = extract_field(curr, 0)
             if curr.join_type == JoinType.RIGHT:
                 pk_field, foreign_fld = foreign_fld, pk_field
         if curr.join_type == JoinType.RIGHT:
