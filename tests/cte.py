@@ -95,16 +95,17 @@ def get_query_list(count: int) -> tuple:
 def factory_result(query_count: int) -> CTEFactory:
     users, sales = get_query_list(query_count)
     return CTEFactory(f"""
-        SELECT u001.name, agg_sales.total
-        FROM (
-            {users}
-        ) AS u001
-        JOIN (
-            {sales}
-        )
-        As agg_sales
-        ON u001.id = agg_sales.user_id
-        ORDER BY u001.name
+        Summary[              
+            SELECT u001.name, agg_sales.total
+            FROM (
+                {users}
+            ) AS u001
+            JOIN (
+                {sales}
+            )
+            As agg_sales
+            ON u001.id = agg_sales.user_id
+        ]
     """)        
 
 def expected_from_factory(query_count: int) -> str:
@@ -132,26 +133,21 @@ def compare_factory_result(count: int) -> bool:
         re.sub(r'\s+', ' ', str(res)).strip()
         for res in [factory_result(count), expected_from_factory(count)]
     ]
-    txt1 = re.sub('\bLEFT\b', '', txt1)
     return SequenceMatcher(None, txt1, txt2).ratio() > 0.66
 
 def compare_query_list() -> bool:
     ctes = factory_result(2).cte_list
-    if len(ctes) != 2:
+    if len(ctes) != 3:
         return False
-    return all(len(c.query_list) == 2 for c in ctes)
+    return all(len(c.query_list) == 2 for c in ctes if c.table_name != 'Summary')
 
 def cte_factory_cypher_results() -> list:
     # CTEFactory.TEMPLATE_FIELD_FUNC
     cte = CTEFactory(
         txt='''
-            #Employee #Customer #Supplier
-
             All_people[
-                [1]     [2]     [3]
+                #Employee #Customer #Supplier
             ]
-            
-            [-1](**, ref_year*) <- Goal(^year, target)
         ''',
         template='''
             Sales_by_{t}[

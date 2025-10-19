@@ -1019,7 +1019,6 @@ print(
             )
             As agg_sales
             ON u001.id = agg_sales.user_id
-            ORDER BY u001.name
         """)        
 )
 ```
@@ -1041,8 +1040,6 @@ results...
             u001 u001
             JOIN agg_sales agg_sales ON
             (u001.id = agg_sales.user_id)
-    ORDER BY
-            u001.name
 ```
 
 #### 17.3.1 - You can also pass a Cypher script like in the example below:
@@ -1053,8 +1050,6 @@ results...
                 year$ref_date:ref_year@, sum$quantity:qty_sold,
             vendor) <- Vendor(id, name:vendors_name@)
         ]
-
-        [-1](**, ref_year) -> Goal(year, target)
     """)
     print(cte)
 
@@ -1064,17 +1059,10 @@ WITH Annual_Sales_per_Vendor AS (
     SELECT ven.name as vendors_name
     , Year(sal.ref_date) as ref_year
     , Sum(sal.quantity) as qty_sold
-    FROM Vendor ven LEFT JOIN Sales sal ON (ven.id = sal.vendor
+    FROM Vendor ven LEFT JOIN Sales sal ON (ven.id = sal.vendor)
     GROUP BY ven.name, ref_year
 )
-SELECT
-        aspv.vendors_name,
-        aspv.ref_year,
-        aspv.qty_sold,
-        goa.target
-FROM
-        Annual_Sales_per_Vendor aspv
-        RIGHT JOIN Goal goa ON (aspv.ref_year = goa.year)
+SELECT * FROM Annual_Sales_per_Vendor aspv
 ```
 For more details, see the [Cypher syntax](#cypher_separators) or [CTE create method](#cte_create_method)!
 

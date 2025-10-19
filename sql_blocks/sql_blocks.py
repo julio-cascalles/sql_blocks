@@ -644,7 +644,11 @@ def quoted(value) -> str:
     if isinstance(value, str):
         if re.search(r'\bor\b', value, re.IGNORECASE):
             raise PermissionError('Possible SQL injection attempt')
-        value = f"'{value}'"
+        return f"'{value}'"
+    elif isinstance(value, Select):
+        query: Select = value
+        query.break_lines = False
+        return f'({query})'
     return str(value)
 
 
@@ -701,10 +705,10 @@ class Where:
         return cls('IS NULL')
     
     @classmethod
-    def inside(cls, values):
+    def inside(cls, values, keyword: str='IN'):
         if isinstance(values, list):
             values = ','.join(quoted(v) for v in values)
-        return cls(f'IN ({values})')
+        return cls(f'{keyword} ({values})')
 
     @classmethod
     def formula(cls, formula: str):
@@ -899,11 +903,6 @@ class If(Code, Frame):
         return self.func_class(
             _case.format('', main)
         ).format(name, main)
-        # return '{func}({param}){over}'.format(
-        #     func=self.func_class.__name__,
-        #     param=_case.format('', main),
-        #     over=self.pattern
-        # )
     
     def get_pattern(self) -> str:
         return ''
@@ -1815,7 +1814,6 @@ class CypherParser(Parser):
             for sep, expr in zip(more[::2], more[1::2]):
                 class_type = {'@': GroupBy, '|': Partition}[sep]
                 self.add_field(expr, [class_type])
-            # FieldList(more, [Field, GroupBy]).add('', query)
         query.join_type = join_type
 
     def add_where(self, token: str):
@@ -2242,17 +2240,34 @@ class Select(SQLObject):
         return language(self).convert()
 
 
-class SelectIN(Select):
+# -------------------------------------------------------
+class SubSelect(Select):
     condition_class = Where
+    SUBQUERY_KEYWORD = 'IN'
 
     def add(self, name: str, main: SQLObject):
         self.break_lines = False
-        self.condition_class.inside(self).add(name, main)
+        self.condition_class.inside(
+            self, self.SUBQUERY_KEYWORD
+        ).add(name, main)
 
-SubSelect = SelectIN
+
+class SelectIN(SubSelect):
+    ...
+
 
 class NotSelectIN(SelectIN):
     condition_class = Not
+
+
+class SelectExists(SubSelect):
+    SUBQUERY_KEYWORD = 'EXISTS'
+
+
+class NotSelecExists(SelectExists):
+    condition_class = Not
+
+# -------------------------------------------------------
 
 
 class CTE(Select):
@@ -2342,10 +2357,120 @@ class Recursive(CTE):
         return self
 
 
+class CTENode:
+    TEMPLATE_FIELD_FUNC = lambda t: t[:3].lower() + '_id'
+
+    def __init__(self, name: str='', pos: int=-1, parent: 'CTENode' = None):
+        self.name = name
+        self.pos = pos
+        self.parent = parent
+        self.children = []
+        if parent:
+            parent.children.append(self)
+        self.content = ''
+        self.expected_char = ''
+        self.sql_flag = {}
+
+    def is_sql(self) -> bool:
+        return any(self.sql_flag.values())
+
+    def has_join(self) -> bool:
+        child: 'CTENode'
+        for child in self.children:
+            if 'JOIN' in child.sql_flag:
+                return True
+        return False
+
+    def tree(self, function: callable):
+        for child in self.children:
+            child.tree(function)
+        function(self)
+
+    @classmethod
+    def create(cls, txt: str, template: str='') -> 'CTENode':
+        PAIR = {'(': ')', '[': ']'}
+        def pattern() -> str:
+            REGEX_OPENING = ''.join( fr"\{char}" for char in PAIR.keys() )
+            REGEX_CLOSING = ''.join( fr"\{char}" for char in PAIR.values() )
+            return fr'(\w+)\s*[{REGEX_OPENING}]|[{REGEX_CLOSING}]'
+        # -------------------------------------------------------------------
+        def get_sql_children(node: 'CTENode', x: int):
+            if node == node.root and node.name == '':
+                node.name = re.sub(r"\s+", ' ', txt[:node.pos]).strip()
+            found = re.search(r'[)]\s*AS\s+(\w+)', txt[x-1:], re.IGNORECASE)
+            if found:
+                node.name = found.group(1)
+            REGEX_UNION = r'UNION\s+ALL|\bunion\b|\bUNION\b|union\s+all'
+            for sub in re.split(REGEX_UNION, node.content):
+                cls('', -1, node).content = re.sub(r"\s+", ' ', sub).strip()
+            if node.sql_flag['JOIN'] and node.parent:
+                REGEX_FIELD = r"\s+\w+[.]\w+\s*"
+                REGEX_JOIN = fr"\bON\b({REGEX_FIELD}={REGEX_FIELD})"
+                node = node.parent
+                arr = [child.name for child in node.children]
+                params = {
+                    'fld': re.findall(r'select\s+(.*)\s+from\b\s*[(]', txt[:x], re.IGNORECASE)[0],
+                    't1': arr[0], 't2': arr[1],
+                    'expr': re.findall(REGEX_JOIN, txt[x:], re.IGNORECASE)[0].strip(),
+                }
+                node.content = 'SELECT {fld} FROM {t1} {t1} JOIN {t2} {t2} ON {expr}'.format(**params)
+        # -------------------------------------------------------------------
+        if template:
+            for name in re.findall(r'[#](\w+)', txt):
+                old = f"#{name}"
+                new = template.format(
+                    t=name, f=cls.TEMPLATE_FIELD_FUNC(name)
+                )
+                txt = txt.replace(old, new)
+        node: 'CTENode' = None # cls()
+        ignore: int = 0
+        for found in re.finditer(pattern(), txt):
+            i = found.end()
+            if found.group() in PAIR.values():
+                if not node or found.group() != node.expected_char:
+                    continue
+                if ignore:
+                    ignore -= 1
+                    continue
+                if not node.has_join():
+                    node.content = re.sub(r'\s+', ' ', txt[node.pos: i-1])
+                if node.is_sql():
+                    get_sql_children(node, i)
+                node = node.parent or node
+            else:
+                name = found.group(1)
+                sql_flag = {key: name.upper() == key for key in ('FROM', 'JOIN')}
+                if any(sql_flag.values()):
+                    name = ''
+                elif txt[i-1] == '(':
+                    if node.is_sql():
+                        ignore += 1
+                    continue
+                node = cls( name, i, node )
+                node.sql_flag = sql_flag
+                node.expected_char = PAIR[txt[i-1]]
+        return node.root
+
+    @property
+    def root(self) -> 'CTENode':
+        result = self
+        while result.parent:
+            result = result.parent
+        return result
+
+    def __dict__(self) -> dict:
+        def to_dict(node: 'CTENode', level: int):
+            if level == 0:
+                return
+            if not isinstance(node.parent.content, dict):
+                node.parent.content = {}
+            node.parent.content[node.name] = node.content
+        self.tree(to_dict)
+        return {self.name: self.content}
+
+
+
 class CTEFactory:
-    MAIN_TAG = '__main__'
-    TEMPLATE_FIELD_FUNC = lambda t: t.lower()[:3] + '_id'
-    ALL_FIELDS = 'all_fields'
 
     def __init__(self, txt: str, template: str = ''):
         """
@@ -2360,61 +2485,51 @@ class CTEFactory:
         `cte_name`[
             Table1(field, `function$`field`:alias`, `group@`) <- Table2(field)
         ]
+
+        template (optional):
+        ---
+        * `{t} = Table name`
+        * `{f} = Field name` (runs CTEFactory.TEMPLATE_FIELD_FUNC)
+
+        > Example: txt="#AAA #BBB", template="SELECT * FROM {t} WHERE {f} = 217"
+        ...results:
+        ```
+            SELECT * FROM AAA WHERE aaa_id = 217
+            UNION
+            SELECT * FROM BBB WHERE bbb_id = 217
+        ```
         """
-        NEGATIVE_MARK = '{last'
-        self.names = {}
-        if template:
-            for table in re.findall(r'[#](\w+)', txt):
-                txt = txt.replace( f'#{table}', template.format(
-                    t=table, f=CTEFactory.TEMPLATE_FIELD_FUNC(table)
-                ) )
-        txt = self.replace_wildcards(txt)
         self.cte_list = []
         self.main = None
-        script_list = txt.split(']')
-        is_negative = False
-        for i, script in enumerate(script_list, 1):            
-            if '{' in script:
-                is_negative = NEGATIVE_MARK in script
-                script = script.format(**self.names) 
-            if i == len(script_list) and is_negative:
-                break
-            self.build_ctes(script)
-            self.fill_names()
-        if not self.cte_list:
-            return
-        if is_negative:
-            self.main = detect(script)
-        elif not self.main:
-            self.main = Select(self.cte_list[-1].table_name)
-            self.main.break_lines = False
+        node = CTENode.create(txt, template)
+        node.tree(self.build_ctes)
 
-    def build_ctes(self, script: str):
-        alias, *body = script.split('[')
-        if body:
-            script = ''.join(body)
-        if not re.sub( r'\s+', '', script):
+    def build_ctes(self, node: CTENode):
+        # -----------------------------------------------
+        if not node.name:
+            node.content = detect(node.content)
             return
-        if parser_class(script) == CypherParser:
-            query_list = Select.parse(script, CypherParser)
-            if not body:
-                alias = '_'.join(query.table_name for query in query_list)
-            related_tables = any([
-                query.join_type.value for query in query_list
-            ])
-            if related_tables:
-                query_list = [ join_queries(query_list) ]
-            self.cte_list += [CTE(alias, query_list)]
-            return 
-        summary = self.extract_subqueries(script)
-        self.main = detect( summary.pop(self.MAIN_TAG) )
-        self.cte_list += [
-            CTE(alias, [
-                Select.parse(query)[0]
-                for query in elements
-            ])
-            for alias, elements in summary.items()
-        ]
+        elif node.children:
+            query_list = []
+            for child in node.children:
+                if child.name:
+                    query_list.append( detect(f'SELECT * FROM {child.name}') )
+                else:
+                    query_list.append(child.content)
+        else:
+            query_list = [detect(node.content)]
+        # -----------------------------------------------
+        if not node.parent: # node == node.root
+            try:
+                if node.has_join():
+                    query_list = [detect(node.content)]
+            except:
+                self.main = None
+            if not self.main:
+                query = Select(node.name)
+                query.break_lines = False
+                self.main = query
+        self.cte_list.append( CTE(node.name, query_list) )
 
     def __str__(self):
         if not self.main:
@@ -2423,108 +2538,6 @@ class CTEFactory:
         lines = [str(cte) for cte in self.cte_list]
         result = ',\n'.join(lines) + '\n' + str(self.main)
         CTE.show_query = True
-        return result
-    
-    def fill_names(self):
-        def get_field_list(query_list) -> list:
-            field_list = []
-            for query in query_list:
-                for field in query.values.get(SELECT, []):
-                    new_item = re.split(
-                        r'\bas\b|\bAS\b|[.]', field
-                    )[-1].strip()
-                    if new_item not in field_list:
-                        field_list.append(new_item)
-            return field_list
-        query_list = []
-        cte: CTE
-        for i, cte in enumerate(self.cte_list):
-            name = f'tag{i+1}'
-            if name in self.names and self.names[name].startswith('{'):
-                self.names[name] = cte.table_name
-            negative_pos = abs( len(self.cte_list) - i )
-            name = f'last{negative_pos}'
-            if name in self.names:
-                self.names[name] = cte.table_name
-            query_list += cte.query_list
-        if self.ALL_FIELDS in self.names:
-            self.names[self.ALL_FIELDS] = ','.join( get_field_list(query_list) )
-    
-    def replace_wildcards(self, txt: str) -> str:
-        # ----------------------------------------------------
-        def has_parentheses(patch: str) -> bool:
-            return re.sub(r'\s+', '', patch).startswith('(')
-        # ----------------------------------------------------
-        result = ''
-        end = 0
-        for found in re.finditer(r'(\[[-]*\d+\])|([*][*])', txt):
-            start = found.start()
-            content = found.group()
-            if content == '**':
-                tag_id = self.ALL_FIELDS
-            else:
-                value = int( content[1:-1] )
-                if value < 0:
-                    prefix = 'last'
-                    value = -value
-                else:
-                    prefix = 'tag'
-                tag_id = f'{prefix}{value}'
-            mark = '{' + tag_id + '}'
-            if tag_id not in self.names:
-                self.names[tag_id] = mark
-            result += '{}{}'.format(
-                txt[end:start], mark
-            )
-            end = found.end()
-            if not has_parentheses(txt[end:]):
-                result += '()'
-        if not result:
-            return txt
-        result += txt[end:]
-        return result
-
-    @classmethod
-    def extract_subqueries(cls, txt: str) -> dict:        
-        result = {}
-        # ---------------------------------------------------
-        def clean_subquery(source: list) -> str:
-            while source:
-                if source[0].upper() == 'SELECT':
-                    break
-                word = source.pop(0)
-                if word.upper() in ('FROM', 'JOIN'):
-                    result[cls.MAIN_TAG] += f' {word}'
-            return ' '.join(source)
-        def balanced_parentheses(expr: str) -> bool:
-            return expr.count('(') == expr.count(')')
-        # ---------------------------------------------------
-        for found in re.finditer(r'(FROM|JOIN)\s*[(]\s*SELECT', txt, re.IGNORECASE):
-            start = found.start()
-            alias = ''
-            pos = start
-            while not alias:
-                found = re.search(r'[)]\s*AS\s+\w+', txt[pos:], re.IGNORECASE)
-                if not found:
-                    break
-                end = found.end() + pos
-                last = end
-                if balanced_parentheses(txt[start: end]):
-                    pos += found.start()
-                    alias = re.findall(r'\s*(\w+)$', txt[pos: end])[0]
-                    end = pos
-                pos = end
-            if not result:
-                result[cls.MAIN_TAG] = txt[:start]
-            query_list = [
-                clean_subquery( expr.split() )
-                for expr in  re.split(
-                    r'\bUNION\b', txt[start: end], flags=re.IGNORECASE
-                )
-            ]
-            result[cls.MAIN_TAG] += f' {alias} {alias}'
-            result[alias] = query_list
-        result[cls.MAIN_TAG] += txt[last:]
         return result
 
 
@@ -2563,6 +2576,32 @@ class RuleAutoField(Rule):
             s1 = set(target.values.get(SELECT, []))
             s2 = set(target.values[ORDER_BY])
             target.values.setdefault(SELECT, []).extend( list(s2-s1) )
+
+class RuleCalcWithColumn(Rule):
+    @classmethod
+    def apply(cls, target: Select):
+        conditions = target.values[WHERE]
+        REGEX_ALPHA = r'[A-Za-z]+'
+        REGEX_FIELD = fr'({REGEX_ALPHA}[.])*({REGEX_ALPHA})'
+        REGEX_MATH_OP = r'([\+\-\*\/])'
+        REGEX_NUMBER = r'(\d+[.]\d+|\d+)'
+        REGEX_COMPARE = r'([><=]+)'
+        INVERSE_OP = {'+': '-', '-': '+', '*': '/', '/': '*'}
+        pattern = re.compile( r'\s*'.join([
+            REGEX_FIELD, REGEX_MATH_OP, REGEX_NUMBER, REGEX_COMPARE, REGEX_NUMBER
+        ]) )
+        count = 0
+        for i, cond in enumerate(conditions):
+            found = pattern.findall(cond)
+            if not found:
+                continue
+            alias, field, op, num1, comp, num2 = found[-1]
+            expr = f"{num2} {INVERSE_OP[op]} {num1}"
+            conditions[i] = "{} {} {}".format(
+                alias+field,
+                comp,
+                eval(expr)
+            )
 
 
 class RuleLogicalOp(Rule):
@@ -2624,7 +2663,7 @@ class RuleReplaceJoinBySubselect(Rule):
             if keep_join:
                 query.add(fk_field, main)
                 continue
-            query.__class__ = SubSelect
+            query.__class__ = SelectIN
             Field.add(primary_k, query)
             query.add(fk_field, main)
             modified = True
@@ -2675,14 +2714,29 @@ def detect(text: str, join_method = join_queries, format: str='') -> Select | li
     return result
 # ===========================================================================================//
 
+
 if __name__ == "__main__":
-    query = Select(
-        'Sales s',
-        ref_year=Partition( Year('ref_date') ),
-        month=Pivot([
-            (1, 'jan'), (2, 'feb'), (3, 'mar'), 
-        ], 5, Avg),
-        # region=Pivot(['north', 'south', 'east', 'west'], 'price'),
-        tax=If('days_late > 0', Sum).As('penalty')
-    )
-    print(query)
+    # cte = CTEFactory("""
+    #     Annual_Sales_per_Vendor[
+    #         Sales(
+    #             year$ref_date:ref_year@, sum$quantity:qty_sold,
+    #         vendor) <- Vendor(id, name:vendors_name@)
+    #     ]
+    # """)
+    cte = CTEFactory("""
+        Summary[
+                SELECT u001.name, agg_sales.total
+                FROM (
+                    SELECT * FROM Users u
+                    WHERE u.status = 'active'
+                ) AS u001
+                JOIN (
+                    SELECT s.user_id, Sum(s.value) as total
+                    FROM Sales s
+                    GROUP BY s.user_id
+                )
+                As agg_sales
+                ON u001.id = agg_sales.user_id
+        ]
+    """)        
+    print(cte)
