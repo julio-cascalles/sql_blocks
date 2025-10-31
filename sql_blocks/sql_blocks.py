@@ -2331,7 +2331,11 @@ class Select(SQLObject):
 
     def translate_to(self, language: QueryLanguage|str|LanguageEnum) -> str:
         if isinstance(language, str):
-            language = LanguageEnum[language]
+            try:
+                language = LanguageEnum[language]
+            except:
+                print(f'Unknown "{language}" language.')
+                return
         if isinstance(language, LanguageEnum):
             language = language.value
         return language(self).convert()
@@ -2924,7 +2928,7 @@ def execute(params: list, program: str='python -m sql_blocks') -> Select:
         '--cte': (
             "Creates CTEs from subqueries in the script.",
             CTEFactory,
-            lambda txt, args: CTEFactory(txt, args[0] if args else '')
+            lambda txt, args: CTEFactory(txt, args[0])
         ),
         '--translate': (
             "Translate the script into another language",
@@ -2938,7 +2942,7 @@ def execute(params: list, program: str='python -m sql_blocks') -> Select:
             program, ''.join( f'\n\t{op} : {descr}' for op, (descr, _, _) in OPTIONS.items() )
         ))
         return
-    result = []
+    scripts = []
     SQLObject.ALIAS_FUNC = lambda t: t[0].lower()
     # CTENode.TEMPLATE_FIELD_FUNC
     is_help: bool = False
@@ -2955,7 +2959,7 @@ def execute(params: list, program: str='python -m sql_blocks') -> Select:
             if is_help:
                 class_type.help()
                 return
-            return func(result[-1], args)
+            return func(scripts[-1], args or [''])
         fname, ext = os.path.splitext(param)
         if not ext:
             ext = '.sql'
@@ -2963,6 +2967,6 @@ def execute(params: list, program: str='python -m sql_blocks') -> Select:
         if not os.path.exists(fname):
             raise ValueError(f'{fname} does not exists.')
         with open(fname, 'r') as f:
-            result.append( f.read() )
-    return mix(*result)
+            scripts.append( f.read() )
+    return mix(*scripts)
 # ===========================================================================================//
