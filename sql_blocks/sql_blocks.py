@@ -32,6 +32,8 @@ class SQLObject:
     a user function to SQLObject.ALIAS_FUNC
     """
 
+    catalog = {}
+
     def __init__(self, table_name: str=''):
         self.__alias = ''
         self.values = {}
@@ -47,7 +49,7 @@ class SQLObject:
         if is_file_name:
             ref = table_name.split('/')[-1].split('.')[0]
         if cls.ALIAS_FUNC:
-            return cls.ALIAS_FUNC(ref), table_name
+            return cls.ALIAS_FUNC(ref), table_name.split()[0]
         elif ' ' in table_name.strip():
             table_name, alias = table_name.split()
             return alias, table_name
@@ -58,10 +60,23 @@ class SQLObject:
             ), table_name
         return ref.lower()[:3], table_name
 
+    @classmethod
+    def get_from_catalog(cls, table_name: str, alias: str='') -> str:
+        if not alias:
+            alias, table_name = cls.split_alias(table_name)
+        names: set = cls.catalog.get(alias, set())
+        names.add(table_name)
+        cls.catalog[alias] = names
+        if len(names) > 1:
+            pos = list(names).index(table_name) + 1
+            alias = f"{alias}{pos}"
+        return alias
+
     def set_table(self, table_name: str):
         if not table_name:
             return
-        self.__alias, table_name = self.split_alias(table_name)
+        alias, table_name = self.split_alias(table_name)
+        self.__alias = alias # self.get_from_catalog(table_name, alias)
         self.values.setdefault(FROM, []).append(f'{table_name} {self.alias}')
 
     @property
@@ -114,7 +129,8 @@ class SQLObject:
                 return source
             result = []
             for fld in source:
-                result += re.split(r'([=()]|<>|\s+ON\s+|\s+on\s+)', fld)
+                # result += re.split(r'([=()]|<>|\s+ON\s+|\s+on\s+)', fld)
+                result += re.split(r'([=()]|<>|\bon\b)', fld, re.IGNORECASE)
             return result
         def cleanup(text: str) -> str:
             # if re.search(r'^CASE\b', text):
@@ -261,6 +277,7 @@ class Function(Code):
     separator = ', '
     auto_convert = True
     append_param = False
+    slice_filter: slice = None
 
     def __init__(self, *params: list):
         # ----------------------------------------
@@ -277,7 +294,7 @@ class Function(Code):
                     return Cast(func, main_param)
             return param
         # ----------------------------------------
-        self.params = [set_func_types(p) for p in params]
+        self.params = [set_func_types(p) for p in params if p is not None]
         self.pattern = self.get_pattern()
         super().__init__()
 
@@ -344,6 +361,8 @@ class Function(Code):
             Partition.params = None
         if name not in '*_':
             self.set_main_param(name, main)
+        if self.slice_filter:
+            self.params = self.params[self.slice_filter]
         return str(self)
 
     @classmethod
@@ -375,6 +394,36 @@ class SubString(Function):
         if self.dialect in (Dialect.ORACLE, Dialect.MYSQL):
             return 'Substr({params})'
         return super().get_pattern()
+
+
+class Re(Function):
+    """
+    Extracts a substring that matches a pattern
+    """
+    inputs = [CHAR, CHAR, INT, INT]
+    output = CHAR
+
+    def get_pattern(self) -> str:
+        if self.dialect == Dialect.POSTGRESQL:
+            return 'Substring({params})'
+        return 'Regexp_Substr({params})'
+    
+    @classmethod
+    def number_before(cls, string: str, start: int=None, end:int=None):
+        return cls(fr'(\d+)\s*{string}', start, end)
+
+    @classmethod
+    def number_after(cls, string: str, start: int=None, end:int=None):
+        return cls(fr'{string}\s*(\d+)', start, end)
+
+    @classmethod
+    def word_before(cls, string: str, start: int=None, end:int=None):
+        return cls(fr'(\w+)\s*{string}', start, end)
+
+    @classmethod
+    def word_after(cls, string: str, start: int=None, end:int=None):
+        return cls(fr'{string}\s*(\w+)', start, end)
+
 
 # ---- Numeric Functions: --------------------------------
 class Round(Function):
@@ -487,7 +536,7 @@ class Aggregate(Frame):
     output = FLOAT
 
 class Window(Frame):
-    ...
+    inputs = [...]
 
 # ---- Aggregate Functions: -------------------------------
 class Avg(Aggregate, Function):
@@ -521,6 +570,7 @@ class Row_Number(Window, Function):
     within a partition of a result set.
     """
     output = INT
+    slice_filter = slice(-1, None, None)
 
 class Rank(Window, Function):
     """
@@ -528,6 +578,7 @@ class Rank(Window, Function):
     set, based on a specified ordering of data.
     """
     output = INT
+    slice_filter = slice(-1, None, None)
 
 class Lag(Window, Function):
     """
@@ -535,6 +586,7 @@ class Lag(Window, Function):
     preceding row within the same result set.
     """
     output = ANY
+    slice_filter = slice(-1, None, None)
 
 class Lead(Window, Function):
     """
@@ -542,6 +594,7 @@ class Lead(Window, Function):
     subsequent row within the same result set.
     """
     output = ANY
+    slice_filter = slice(-1, None, None)
 
 
 # ---- Conversions and other Functions: ---------------------
@@ -885,7 +938,7 @@ class If(Code, Frame):
     """
     Behaves like an aggregation function
     """
-    def __init__(self, field: str, func_class: Function, condition: Where=None):
+    def __init__(self, field: str, func_class: Function, condition: Where=None, default=0):
         if not condition:
             field, *elements = re.split(r'([<>=]|\bin\b|\blike\b)', field, re.IGNORECASE)
             condition = Where( ''.join(elements) )
@@ -893,12 +946,13 @@ class If(Code, Frame):
         self.condition = condition
         self.func_class = func_class
         self.pattern = ''
+        self.default = default
         super().__init__()
 
     def format(self, name: str, main: SQLObject) -> str:
         quoted_result = Case.quoted_result
         Case.quoted_result = False
-        _case = Case(self.field).when(self.condition).then(name).else_value(0)
+        _case = Case(self.field).when(self.condition).then(name).else_value(self.default)
         Case.quoted_result = quoted_result
         return self.func_class(
             _case.format('', main)
@@ -911,7 +965,7 @@ class If(Code, Frame):
 class Pivot:
     where_method = Where.eq
 
-    def __init__(self, values: list, result: str, func_class: Function=Sum):
+    def __init__(self, values: list, result: str, func_class: Function=Sum, default=0):
         self.values = values
         self.func_class = func_class
         self.result = str(result)
@@ -978,7 +1032,7 @@ class SameDay(Between):
 class Range(Case):
     INC_FUNCTION = lambda x: x + 1
 
-    def __init__(self, field: str, values: dict):
+    def __init__(self, field: str, values: dict, default: str=None):
         super().__init__(field)
         start = 0
         cls = self.__class__
@@ -987,6 +1041,8 @@ class Range(Case):
                 Between(start, value).literal()
             ).then(label)
             start = cls.INC_FUNCTION(value)
+        if default:
+            self.else_value(default)
 
 
 class Clause:
@@ -1164,6 +1220,13 @@ class Rule:
     @classmethod
     def apply(cls, target: 'Select'):
         ...
+
+    @classmethod
+    def help(cls):
+        print('Optimization rules:\n{}'.format(
+            '\n'.join(f'\t{rule.__doc__}' for rule in cls.__subclasses__())
+        ))
+
 
 class QueryLanguage:
     pattern = '{select}{_from}{where}{group_by}{order_by}{limit}'
@@ -1695,9 +1758,11 @@ class SQLParser(Parser):
 
     def prepare(self):
         keywords = '|'.join(k + r'\b' for k in KEYWORD)
+        tbl_join = [fr"\b{expr}\b" for expr in ('JOIN','LEFT','RIGHT','ON')]
         flags = re.IGNORECASE + re.MULTILINE
         self.REGEX['keywords'] = re.compile(f'({keywords})', flags)
         self.REGEX['subquery'] = re.compile(r'(\w+[.])*\w+\s+in\s*[(]\s*SELECT\s+', flags)
+        self.REGEX['tbl_join'] = re.compile(r"|".join(tbl_join), flags)
 
     def eval(self, txt: str):
         def find_last_word(pos: int) -> int:
@@ -1726,6 +1791,10 @@ class SQLParser(Parser):
                     break
             return start, end
         result, subqueries = {}, {}
+        def raise_table_not_found(table: str):
+            raise KeyError("Table '{}' not found in [{}]".format(
+                table, ', '.join(result.keys())
+            ))
         found = self.REGEX['subquery'].search(txt)
         while found:
             start, end = find_parenthesis(found)
@@ -1751,10 +1820,14 @@ class SQLParser(Parser):
             found = self.REGEX['subquery'].search(txt)
         tokens = [t.strip() for t in self.REGEX['keywords'].split(txt) if t.strip()]
         values = {k.upper(): v for k, v in zip(tokens[::2], tokens[1::2])}
-        tables = [t.strip() for t in re.split('JOIN|LEFT|RIGHT|ON', values[FROM]) if t.strip()]
+        tables = [t.strip() for t in self.REGEX['tbl_join'].split(values[FROM]) if t.strip()]
         for item in tables:
             if '=' in item:
                 a1, f1, a2, f2 = [r.strip() for r in re.split('[().=]', item) if r]
+                if a1 not in result:
+                    raise_table_not_found(a1)
+                if a2 not in result:
+                    raise_table_not_found(a2)
                 obj1: SQLObject = result[a1]
                 obj2: SQLObject = result[a2]
                 PrimaryKey.add(f2, obj2)
@@ -1788,7 +1861,7 @@ class CypherParser(Parser):
 
     def prepare(self):
         self.REGEX['separator'] = re.compile(fr'({self.CHAR_SET}|->|<-|{self.KEYWORDS})')
-        self.REGEX['condition'] = re.compile(r'(\w+)(\s*[<>=]+\s*["\']*[\d+|\w+|\+\-\*\/]*["\']*)')
+        self.REGEX['condition'] = re.compile(r'([<>=]|IN|LIKE)', re.IGNORECASE)
         self.REGEX['alias_pos'] = re.compile(r'(\w+)[.](\w+)')
         self.join_type = JoinType.INNER
         self.TOKEN_METHODS = {
@@ -1822,9 +1895,7 @@ class CypherParser(Parser):
             alias, field, *condition = elements
             query = self.aliases[alias]
         else:
-            field, *condition = [
-                t for t in self.REGEX['condition'].split(token) if t
-            ]
+            field, *condition = self.REGEX['condition'].split(token)
             query = self.queries[-1]
         Where(' '.join(condition)).add(field, query)
     
@@ -2100,6 +2171,21 @@ class MongoParser(Parser):
 # ----------------------------
 
 
+class LanguageEnum(Enum):
+    SQL = QueryLanguage
+    MongoDB = MongoDBLanguage
+    Pandas = PandasLanguage
+    Databricks = DatabricksLanguage
+    Spark = SparkLanguage
+    Neo4J = Neo4JLanguage
+
+    @classmethod
+    def help(cls):
+        print('Avaiable scripting languages:\n{}'.format(
+            '\n'.join(f'\t{lang_enum.name}' for lang_enum in cls)
+        ))
+
+
 class Select(SQLObject):
     join_type: JoinType = JoinType.INNER
     EQUIVALENT_NAMES = {}
@@ -2193,6 +2279,12 @@ class Select(SQLObject):
         query.add(primary_k, other)
         return other
 
+    def __mul__(self,other: SQLObject) -> SQLObject:
+        query = self.copy()
+        for key in USUAL_KEYS:
+            query.update_values(key, other.values.get(key, []))
+        return query
+
     def limit(self, row_count: int=100, offset: int=0):
         if Function.dialect == Dialect.SQL_SERVER:
             fields = self.values.get(SELECT)
@@ -2228,6 +2320,7 @@ class Select(SQLObject):
             rules = Rule.__subclasses__()
         for rule in rules:
             rule.apply(self)
+        return self
 
     def add_fields(self, fields: list, class_types=None):
         class_types = TO_LIST(class_types)
@@ -2236,7 +2329,11 @@ class Select(SQLObject):
             class_types += [Field]
         FieldList(fields, class_types).add('', self)
 
-    def translate_to(self, language: QueryLanguage) -> str:
+    def translate_to(self, language: QueryLanguage|str|LanguageEnum) -> str:
+        if isinstance(language, str):
+            language = LanguageEnum[language]
+        if isinstance(language, LanguageEnum):
+            language = language.value
         return language(self).convert()
 
 
@@ -2273,6 +2370,7 @@ class NotSelecExists(SelectExists):
 class CTE(Select):
     prefix = ''
     show_query = True
+    LINE_SIZE = 30
 
     def __init__(self, table_name: str, query_list: list[Select]=[]):
         super().__init__(table_name)
@@ -2291,7 +2389,7 @@ class CTE(Select):
             result, line = [], ''
             keywords = '|'.join(KEYWORD)
             for word in re.split(fr'({keywords}|AND|OR|JOIN|,)', str(query)):
-                if len(line) >= 30:
+                if len(line) >= self.LINE_SIZE:
                     result.append(line)
                     line = ''
                 line += word
@@ -2360,16 +2458,20 @@ class Recursive(CTE):
 class CTENode:
     TEMPLATE_FIELD_FUNC = lambda t: t[:3].lower() + '_id'
 
-    def __init__(self, name: str='', pos: int=-1, parent: 'CTENode' = None):
-        self.name = name
+    def __init__(self, descr: str='', pos: int=-1, parent: 'CTENode' = None):
+        self.description = descr
         self.pos = pos
-        self.parent = parent
+        self.parent = None
         self.children = []
         if parent:
-            parent.children.append(self)
+            parent.add(self)
         self.content = ''
         self.expected_char = ''
         self.sql_flag = {}
+
+    def add(self, child: 'CTENode'):
+        self.children.append(child)
+        child.parent = self
 
     def is_sql(self) -> bool:
         return any(self.sql_flag.values())
@@ -2395,25 +2497,32 @@ class CTENode:
             return fr'(\w+)\s*[{REGEX_OPENING}]|[{REGEX_CLOSING}]'
         # -------------------------------------------------------------------
         def get_sql_children(node: 'CTENode', x: int):
-            if node == node.root and node.name == '':
-                node.name = re.sub(r"\s+", ' ', txt[:node.pos]).strip()
+            if not node.parent and node.description == '':
+                node.description = re.sub(r"\s+", ' ', txt[:node.pos]).strip()
             found = re.search(r'[)]\s*AS\s+(\w+)', txt[x-1:], re.IGNORECASE)
             if found:
-                node.name = found.group(1)
+                node.description = found.group(1)
             REGEX_UNION = r'UNION\s+ALL|\bunion\b|\bUNION\b|union\s+all'
             for sub in re.split(REGEX_UNION, node.content):
                 cls('', -1, node).content = re.sub(r"\s+", ' ', sub).strip()
             if node.sql_flag['JOIN'] and node.parent:
-                REGEX_FIELD = r"\s+\w+[.]\w+\s*"
+                REGEX_FIELD = r"\s*(\w+[.])*(\w+)\s*"
                 REGEX_JOIN = fr"\bON\b({REGEX_FIELD}={REGEX_FIELD})"
                 node = node.parent
-                arr = [child.name for child in node.children]
+                sub: str
+                sub = re.findall(r'select\s+(.*)\s+from\b\s*[(]', txt[:x], re.IGNORECASE)[0]                
+                tables = [child.description for child in node.children]
+                _alias = [SQLObject.get_from_catalog(t) for t in tables]
+                change =  lambda s, i: s.replace(f"{tables[i]}.", f"{_alias[i]}.")
+                fields = change(change(sub, 0), 1)
+                relats = re.findall(REGEX_JOIN, txt[x:], re.IGNORECASE)[0]
                 params = {
-                    'fld': re.findall(r'select\s+(.*)\s+from\b\s*[(]', txt[:x], re.IGNORECASE)[0],
-                    't1': arr[0], 't2': arr[1],
-                    'expr': re.findall(REGEX_JOIN, txt[x:], re.IGNORECASE)[0].strip(),
+                    'fld': fields,
+                    't1': tables[0], 'a1': _alias[0],
+                    't2': tables[1], 'a2': _alias[1],
+                    'r1': relats[2], 'r2': relats[4],
                 }
-                node.content = 'SELECT {fld} FROM {t1} {t1} JOIN {t2} {t2} ON {expr}'.format(**params)
+                node.content = 'SELECT {fld} FROM {t1} {a1} JOIN {t2} {a2} ON {a1}.{r1}={a2}.{r2}'.format(**params)
         # -------------------------------------------------------------------
         if template:
             for name in re.findall(r'[#](\w+)', txt):
@@ -2422,7 +2531,10 @@ class CTENode:
                     t=name, f=cls.TEMPLATE_FIELD_FUNC(name)
                 )
                 txt = txt.replace(old, new)
-        node: 'CTENode' = None # cls()
+        node: 'CTENode' = None
+        root: 'CTENode' = None
+        main: 'CTENode' = None
+        orphans: list = []
         ignore: int = 0
         for found in re.finditer(pattern(), txt):
             i = found.end()
@@ -2434,102 +2546,119 @@ class CTENode:
                     continue
                 if not node.has_join():
                     node.content = re.sub(r'\s+', ' ', txt[node.pos: i-1])
+                if not node.parent:
+                    orphans.append(node)
+                    if len(orphans) > 1:
+                        if not main:
+                            main = cls('main')
+                            main.content = txt[i:].strip()
+                        for lost in orphans:
+                            main.add(lost)
+                        orphans = []                            
+                        root = main
+                    elif node == root and node.content == '':
+                        node.content = txt[i:].strip()
                 if node.is_sql():
                     get_sql_children(node, i)
-                node = node.parent or node
+                node = node.parent
             else:
                 name = found.group(1)
                 sql_flag = {key: name.upper() == key for key in ('FROM', 'JOIN')}
                 if any(sql_flag.values()):
                     name = ''
                 elif txt[i-1] == '(':
-                    if node.is_sql():
+                    if not node or node.is_sql():
                         ignore += 1
                     continue
                 node = cls( name, i, node )
+                if not root:
+                    root = node
                 node.sql_flag = sql_flag
                 node.expected_char = PAIR[txt[i-1]]
-        return node.root
-
-    @property
-    def root(self) -> 'CTENode':
-        result = self
-        while result.parent:
-            result = result.parent
-        return result
-
-    def __dict__(self) -> dict:
-        def to_dict(node: 'CTENode', level: int):
-            if level == 0:
-                return
-            if not isinstance(node.parent.content, dict):
-                node.parent.content = {}
-            node.parent.content[node.name] = node.content
-        self.tree(to_dict)
-        return {self.name: self.content}
+        return root
 
 
 
 class CTEFactory:
+    """
+    SQL syntax:
+    ---
+    **SELECT field, field
+    FROM** ( `sub_query1` ) **AS** `alias_1`
+    JOIN ( `sub_query2` ) **AS** `alias_2` **ON** `__join__`
+    
+    Cypher syntax:
+    ---
+    `cte_name`[
+        Table1(field, `function$`field`:alias`, `group@`) <- Table2(field)
+    ]
+
+    template (optional):
+    ---
+    * `{t} = Table name`
+    * `{f} = Field name` (runs CTEFactory.TEMPLATE_FIELD_FUNC)
+
+    > Example: txt="#AAA #BBB", template="SELECT * FROM {t} WHERE {f} = 217"
+    ...results:
+    ```
+        SELECT * FROM AAA WHERE aaa_id = 217
+        UNION
+        SELECT * FROM BBB WHERE bbb_id = 217
+    ```
+    """
 
     def __init__(self, txt: str, template: str = ''):
-        """
-        SQL syntax:
-        ---
-        **SELECT field, field
-        FROM** ( `sub_query1` ) **AS** `alias_1`
-        JOIN ( `sub_query2` ) **AS** `alias_2` **ON** `__join__`
-        
-        Cypher syntax:
-        ---
-        `cte_name`[
-            Table1(field, `function$`field`:alias`, `group@`) <- Table2(field)
-        ]
-
-        template (optional):
-        ---
-        * `{t} = Table name`
-        * `{f} = Field name` (runs CTEFactory.TEMPLATE_FIELD_FUNC)
-
-        > Example: txt="#AAA #BBB", template="SELECT * FROM {t} WHERE {f} = 217"
-        ...results:
-        ```
-            SELECT * FROM AAA WHERE aaa_id = 217
-            UNION
-            SELECT * FROM BBB WHERE bbb_id = 217
-        ```
-        """
         self.cte_list = []
         self.main = None
         node = CTENode.create(txt, template)
         node.tree(self.build_ctes)
 
+    @classmethod
+    def help(cls):
+        print(cls.__doc__)
+
     def build_ctes(self, node: CTENode):
+        # ================================================
+        def generic_query(node: CTENode) -> Select:
+            result = Select(node.description)
+            result.break_lines = False
+            return result
         # -----------------------------------------------
-        if not node.name:
-            node.content = detect(node.content)
+        try:
+            query = detect(node.content)
+        except SyntaxError as e:
+            if node.expected_char == ']':
+                found = re.findall(r"(\w*)\s*[(]", node.content)
+                if found and found[0].strip() == '':
+                    node.content = node.description + node.content
+                    self.build_ctes(node)
+                    return
+            query = None
+        # -----------------------------------------------
+        if not node.description:
+            node.content = query
             return
         elif node.children:
             query_list = []
+            child: CTENode
             for child in node.children:
-                if child.name:
-                    query_list.append( detect(f'SELECT * FROM {child.name}') )
+                if child.description:
+                    query_list.append( detect(f'SELECT * FROM {child.description}') )
                 else:
                     query_list.append(child.content)
         else:
-            query_list = [detect(node.content)]
+            query_list = [query]
         # -----------------------------------------------
         if not node.parent: # node == node.root
-            try:
-                if node.has_join():
-                    query_list = [detect(node.content)]
-            except:
-                self.main = None
-            if not self.main:
-                query = Select(node.name)
-                query.break_lines = False
+            if not query:
+                self.main = generic_query(node)
+            elif node.expected_char == ']':
                 self.main = query
-        self.cte_list.append( CTE(node.name, query_list) )
+            elif node.has_join():
+                query_list = [query]
+                self.main = generic_query(node)
+        SQLObject.catalog = {}
+        self.cte_list.append( CTE(node.description, query_list) )
 
     def __str__(self):
         if not self.main:
@@ -2544,6 +2673,10 @@ class CTEFactory:
 # ----- Rules -----
 
 class RulePutLimit(Rule):
+    """
+    PutLimit - It limits the number of records to 100 if there is no WHERE clause
+               or if there too many columns (SELECT * ...)
+    """
     @classmethod
     def apply(cls, target: Select):
         need_limit = any(not target.values.get(key) for key in (WHERE, SELECT))
@@ -2552,6 +2685,9 @@ class RulePutLimit(Rule):
 
 
 class RuleSelectIN(Rule):
+    """
+    SelectIN - Replace multiple conditions for the same field with a single `IN` condition
+    """
     @classmethod
     def apply(cls, target: Select):
         for i, condition in enumerate(target.values[WHERE]):
@@ -2567,6 +2703,10 @@ class RuleSelectIN(Rule):
 
 
 class RuleAutoField(Rule):
+    """
+    AutoField - If no columns is specified, it uses the columns
+        defined in the GROUP BY, ORDER BY or conditions
+    """
     @classmethod
     def apply(cls, target: Select):
         if target.values.get(GROUP_BY):
@@ -2574,10 +2714,23 @@ class RuleAutoField(Rule):
             target.values[ORDER_BY] = []
         elif target.values.get(ORDER_BY):
             s1 = set(target.values.get(SELECT, []))
-            s2 = set(target.values[ORDER_BY])
+            s2 = set(
+                fld.split()[0] for fld in target.values[ORDER_BY]
+            )
             target.values.setdefault(SELECT, []).extend( list(s2-s1) )
+        elif not target.values.get(SELECT):
+            for condition in target.values.get(WHERE, []):
+                arr = re.split(r'([<>=]|\bin\b|\blike\b)', condition, re.IGNORECASE)
+                if len(arr) < 3 or arr[1] == '=':
+                    continue
+                field = arr[0].split('.')[-1]
+                target.values.setdefault(SELECT, []).append(field)
 
 class RuleCalcWithColumn(Rule):
+    """
+    CalcWithColumn - It simplifies mathematical expressions involving
+        columns, to isolate the fields of numerical constants.
+    """
     @classmethod
     def apply(cls, target: Select):
         conditions = target.values[WHERE]
@@ -2605,6 +2758,11 @@ class RuleCalcWithColumn(Rule):
 
 
 class RuleLogicalOp(Rule):
+    """
+    LogicalOp - Inverted conditions involving `NOT` are simplified
+        to their non-NOT versions - example:  `NOT field <> 5`
+        will be converted to   `field = 5`.
+    """
     REVERSE = {">=": "<", "<=": ">", "=": "<>"}
     REVERSE |= {v: k for k, v in REVERSE.items()}
 
@@ -2625,9 +2783,10 @@ class RuleLogicalOp(Rule):
 
 class RuleDateFuncReplace(Rule):
     """
-    SQL algorithm by Ralff Matias
+    DateFuncReplace - Replace conditions with YEAR function 
+        wih their equivalent using BETWEEN.
     """
-    REGEX = re.compile(r'(YEAR[(]|year[(]|=|[)])')
+    REGEX = re.compile(r'(YEAR[(]|=|[)])', re.IGNORECASE)
 
     @classmethod
     def apply(cls, target: Select):
@@ -2646,6 +2805,10 @@ class RuleDateFuncReplace(Rule):
 
 
 class RuleReplaceJoinBySubselect(Rule):
+    """
+    ReplaceJoinBySubselect - Instead of a JOIN that return no fields,
+        it performs the condition using a subquery of that table.
+    """
     @classmethod
     def apply(cls, target: Select):
         main, *others = Select.parse( str(target) )
@@ -2712,31 +2875,94 @@ def detect(text: str, join_method = join_queries, format: str='') -> Select | li
     if join_method:
         result = join_method(result)
     return result
+
+def mix(main_script: str, complement: str) -> Select:
+    """
+    Completes a query using parts of another query.
+    ---
+    * **main_script** May be a _Cypher_ script - e.g.:  `Table1(primary_key) <- Table2(foreign_key)`
+    * **complement** Must be a SQL script
+    """
+    def sql_parts(script: str) -> list:
+        script = re.sub(r'\s+', ' ', script)
+        result = re.findall(r'(.*)\bfrom\s*(\w+)(.*)', script, re.IGNORECASE)
+        if not result:
+            return ['', '', script]
+        return result[0]
+    def not_eq(t1: str, t2: str) -> bool:
+        t1, t2 = [table.lower().strip() for table in (t1, t2)]
+        return t1 != t2
+    parser: Parser = parser_class(main_script)
+    q1: Select = parser(main_script, Select).queries[0]
+    is_join: bool = False
+    prefix, table, suffix = sql_parts(complement)
+    if not prefix:
+        prefix = 'SELECT *'
+    if not table:
+        table = q1.table_name
+    elif not_eq(table, q1.table_name):
+        if parser != CypherParser:
+            raise ValueError('For relationships between tables, main_script must be a Cypher script.')
+        is_join = True
+    complement = f"{prefix} FROM {table} {suffix}"
+    q2: Select = Select.parse(complement)[0]
+    if is_join:
+        return q1 + q2
+    return q1 * q2
+
+def execute(params: list, program: str='python -m sql_blocks') -> Select:
+    """
+    Executes command-line parameters
+    """
+    import os
+    OPTIONS = {
+        '--optimize': (
+            "Optimizes query syntax",
+            Rule,
+            lambda txt, args: detect(txt).optimize()
+        ),
+        '--cte': (
+            "Creates CTEs from subqueries in the script.",
+            CTEFactory,
+            lambda txt, args: CTEFactory(txt, args[0] if args else '')
+        ),
+        '--translate': (
+            "Translate the script into another language",
+            LanguageEnum,
+            lambda txt, args: detect(txt).translate_to(args[0])
+        ),
+    }
+    if len(params) != 3:
+        print('-'*50)
+        print('Syntax: {} [<file1>|?] [<file2>|<option>]\nOptions: {}\n'.format(
+            program, ''.join( f'\n\t{op} : {descr}' for op, (descr, _, _) in OPTIONS.items() )
+        ))
+        return
+    result = []
+    SQLObject.ALIAS_FUNC = lambda t: t[0].lower()
+    # CTENode.TEMPLATE_FIELD_FUNC
+    is_help: bool = False
+    for i, param in enumerate(params[1:]):
+        if i == 0:
+            if param == '?':
+                is_help = True
+                continue
+        elif param.startswith('-'):
+            param, *args = param.split(':')            
+            if param not in OPTIONS:
+                raise ValueError(f'Invalid option {param}.')
+            _, class_type, func = OPTIONS.get(param)
+            if is_help:
+                class_type.help()
+                return
+            return func(result[-1], args)
+        fname, ext = os.path.splitext(param)
+        if not ext:
+            ext = '.sql'
+        fname += ext
+        if not os.path.exists(fname):
+            raise ValueError(f'{fname} does not exists.')
+        with open(fname, 'r') as f:
+            result.append( f.read() )
+    return mix(*result)
 # ===========================================================================================//
-
-
-if __name__ == "__main__":
-    # cte = CTEFactory("""
-    #     Annual_Sales_per_Vendor[
-    #         Sales(
-    #             year$ref_date:ref_year@, sum$quantity:qty_sold,
-    #         vendor) <- Vendor(id, name:vendors_name@)
-    #     ]
-    # """)
-    cte = CTEFactory("""
-        Summary[
-                SELECT u001.name, agg_sales.total
-                FROM (
-                    SELECT * FROM Users u
-                    WHERE u.status = 'active'
-                ) AS u001
-                JOIN (
-                    SELECT s.user_id, Sum(s.value) as total
-                    FROM Sales s
-                    GROUP BY s.user_id
-                )
-                As agg_sales
-                ON u001.id = agg_sales.user_id
-        ]
-    """)        
-    print(cte)

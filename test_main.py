@@ -193,16 +193,9 @@ def test_parser_classes():
 
 def test_over():
     expected = {
-        'sum',
-        'partition by student_id order by due_date',
-        'as sum_per_student'
+        'over( partition by student_id order by due_date) as sum_per_student', 
     }
     res = diff_over_sum()
-    print('@'*50)
-    print(res)
-    print('-'*50)
-    print(res.intersection(expected))
-    print('@'*50)
     assert res.intersection(expected) == expected
 
 def test_function_fields():

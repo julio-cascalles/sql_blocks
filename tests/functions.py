@@ -12,7 +12,7 @@ def diff_over_sum() -> set:
             student_id=Partition, due_date=OrderBy
         ).As('sum_per_student')
     )
-    return query.diff(SELECT, ['OVER('], True)
+    return query.diff(SELECT, [], True)
 
 def function_fields() -> list:
     query=Select(
