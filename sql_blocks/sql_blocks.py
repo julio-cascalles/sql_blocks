@@ -1791,6 +1791,7 @@ class SQLParser(Parser):
                     break
             return start, end
         result, subqueries = {}, {}
+        txt = re.sub(r"\/\*.*\*\/", '', txt) # remove comments
         def raise_table_not_found(table: str):
             raise KeyError("Table '{}' not found in [{}]".format(
                 table, ', '.join(result.keys())
@@ -2587,20 +2588,20 @@ class CTEFactory:
     """
     SQL syntax:
     ---
-    **SELECT field, field
-    FROM** ( `sub_query1` ) **AS** `alias_1`
-    JOIN ( `sub_query2` ) **AS** `alias_2` **ON** `__join__`
+    SELECT <field1>, <field2>...
+    FROM ( <sub_query1> ) AS <alias_1>
+    JOIN ( <sub_query2> ) AS <alias_2> ON <join expr.>
     
     Cypher syntax:
     ---
     `cte_name`[
-        Table1(field, `function$`field`:alias`, `group@`) <- Table2(field)
+        Table1(field, `function$`field`:alias`, `group@`) <- Table2(`field`)
     ]
 
     template (optional):
     ---
-    * `{t} = Table name`
-    * `{f} = Field name` (runs CTEFactory.TEMPLATE_FIELD_FUNC)
+    * {t} = Table name
+    * {f} = Field name  =  table_prefix + "_id"
 
     > Example: txt="#AAA #BBB", template="SELECT * FROM {t} WHERE {f} = 217"
     ...results:
@@ -2880,7 +2881,7 @@ def detect(text: str, join_method = join_queries, format: str='') -> Select | li
         result = join_method(result)
     return result
 
-def mix(main_script: str, complement: str) -> Select:
+def mix(main_script: str, complement: str='') -> Select:
     """
     Completes a query using parts of another query.
     ---
@@ -2899,6 +2900,15 @@ def mix(main_script: str, complement: str) -> Select:
     parser: Parser = parser_class(main_script)
     q1: Select = parser(main_script, Select).queries[0]
     is_join: bool = False
+    if not complement:
+        REGEX_COMMENT = re.compile(r"(\w+)\s*[,]*\s*\/\*(.*)\*\/")
+        for field, comment in REGEX_COMMENT.findall(main_script):
+            q1.delete(field, [SELECT])
+            if '=' in comment:
+                arr = re.findall(r"(\w+)[=](\w+)", comment)
+            else:
+                arr = comment.strip().split()
+            Pivot(arr, 1).add(field, q1)
     prefix, table, suffix = sql_parts(complement)
     if not prefix:
         prefix = 'SELECT *'
@@ -2921,30 +2931,30 @@ def execute(params: list, program: str='python -m sql_blocks') -> Select:
     import os
     OPTIONS = {
         '--optimize': (
-            "Optimizes query syntax",
+            "   Optimizes query syntax.",
             Rule,
             lambda txt, args: detect(txt).optimize()
         ),
         '--cte': (
-            "Creates CTEs from subqueries in the script.",
+            "   Creates CTEs from subqueries in the script.",
             CTEFactory,
             lambda txt, args: CTEFactory(txt, args[0])
         ),
         '--translate': (
-            "Translate the script into another language",
+            ":<language>  Translate the script into the specified language.",
             LanguageEnum,
             lambda txt, args: detect(txt).translate_to(args[0])
         ),
     }
     if len(params) != 3:
         print('-'*50)
-        print('Syntax: {} [<file1>|?] [<file2>|<option>]\nOptions: {}\n'.format(
-            program, ''.join( f'\n\t{op} : {descr}' for op, (descr, _, _) in OPTIONS.items() )
+        print('Syntax: {} [<file1>|?] [<file2>|<option>]\nOptions: {}\n\n{}\n'.format(
+            program, ''.join( f'\n\t{op}{descr}' for op, (descr, _, _) in OPTIONS.items() ),
+            'Note:  ? <file>   Applies pivot based on field comments.'
         ))
         return
     scripts = []
     SQLObject.ALIAS_FUNC = lambda t: t[0].lower()
-    # CTENode.TEMPLATE_FIELD_FUNC
     is_help: bool = False
     for i, param in enumerate(params[1:]):
         if i == 0:
