@@ -965,7 +965,7 @@ class If(Code, Frame):
 class Pivot:
     where_method = Where.eq
 
-    def __init__(self, values: list, result: str, func_class: Function=Sum, default=0):
+    def __init__(self, result: str, values: list, func_class: Function=Sum, default=0):
         self.values = values
         self.func_class = func_class
         self.result = str(result)
@@ -2899,16 +2899,33 @@ def mix(main_script: str, complement: str='') -> Select:
         return t1 != t2
     parser: Parser = parser_class(main_script)
     q1: Select = parser(main_script, Select).queries[0]
-    is_join: bool = False
-    if not complement:
-        REGEX_COMMENT = re.compile(r"(\w+)\s*[,]*\s*\/\*(.*)\*\/")
+    # ----------------------------------------------------
+    def extract_comments() -> bool:
+        REGEX_COMMENT = re.compile(r'(\w+)\s*[,]*\s*/\*([\s\S]*?)\*/')
         for field, comment in REGEX_COMMENT.findall(main_script):
             q1.delete(field, [SELECT])
-            if '=' in comment:
-                arr = re.findall(r"(\w+)[=](\w+)", comment)
+            class_type = Pivot
+            result = 1
+            if '=' not in comment:
+                args = comment.strip().split()
+            elif q1.values.get(GROUP_BY):
+                args = re.findall(r"(\w+)[=](\w+)", comment)
             else:
-                arr = comment.strip().split()
-            Pivot(arr, 1).add(field, q1)
+                result = field
+                field = ''
+                class_type = Range
+                names = re.findall(r'(\w+)=', comment)
+                values = re.findall(r'=(\d+)', comment)
+                args = {name: int(value) for name, value in zip(names, values)}
+            class_type(result, args).add(field, q1)
+    # ----------------------------------------------------
+    is_join: bool = False
+    if not complement:
+        try:
+            extract_comments()
+            return q1
+        except:
+            return None
     prefix, table, suffix = sql_parts(complement)
     if not prefix:
         prefix = 'SELECT *'
@@ -2980,3 +2997,22 @@ def execute(params: list, program: str='python -m sql_blocks') -> Select:
             scripts.append( f.read() )
     return mix(*scripts)
 # ===========================================================================================//
+
+
+if __name__ == "__main__":
+    txt = """
+        SELECT
+            p.name,    
+            p.age /*
+                    gen_X=50
+                    gen_Z=17
+                    alpha=10
+                    bommer=70
+                    gen_Y=21
+            */
+        FROM
+            Person p
+        ORDER BY
+            p.name
+    """
+    mix(txt)
