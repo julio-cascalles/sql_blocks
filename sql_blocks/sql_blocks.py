@@ -2895,11 +2895,11 @@ def mix(main_script: str, complement: str='') -> Select:
         if not result:
             return ['', '', script]
         return result[0]
-    def not_eq(t1: str, t2: str) -> bool:
+    def same_table(t1: str, t2: str) -> bool:
         t1, t2 = [table.lower().strip() for table in (t1, t2)]
-        return t1 != t2
+        return t1 == t2
     parser: Parser = parser_class(main_script)
-    q1: Select = parser(main_script, Select).queries[0]
+    q1, *others = parser(main_script, Select).queries
     # ----------------------------------------------------
     def extract_comments() -> bool:
         REGEX_COMMENT = re.compile(r'(\w+)\s*[,]*\s*/\*([\s\S]*?)\*/')
@@ -2932,10 +2932,24 @@ def mix(main_script: str, complement: str='') -> Select:
         prefix = 'SELECT *'
     if not table:
         table = q1.table_name
-    elif not_eq(table, q1.table_name):
-        if parser != CypherParser:
-            raise ValueError('For relationships between tables, main_script must be a Cypher script.')
+    elif not same_table(table, q1.table_name):
+        # ==== Cypher script in FROM clause of SQL query ====
+        REGEX_ENTITY = r'[<-]*\s*\w+[(]\w+[,]*\s*\w*[)]\s*[->]*'
+        found = re.findall(REGEX_ENTITY, table+suffix)
+        if found:
+            complement = ''.join(found)
+            found = re.search(fr"{q1.table_name}[(]", complement, re.IGNORECASE)
+            if found:
+                start, end = found.span()
+                complement = complement[:start] + q1.table_name + complement[end-1:]
+            others = CypherParser(complement, Select).queries
+        elif parser != CypherParser:
+            raise ValueError('For relationships between tables, main script must be a Cypher script.')
+        found = [qry for qry in others if same_table(qry.table_name, table)]
+        if found:
+            table = found[0].table_name
         is_join = True
+        # ===================================================
     complement = f"{prefix} FROM {table} {suffix}"
     q2: Select = Select.parse(complement)[0]
     if is_join:
@@ -3001,22 +3015,16 @@ def execute(params: list, program: str='python -m sql_blocks') -> Select:
 
 
 if __name__ == "__main__":
-    txt = """
-            select 
-                o.order_num,
-                --o.customer_id,
-                o.ref_date,
-                o.price,
-                o.quantity,
-                o.product_id
-            from 
-                Order o
-            where
-                o.store in (14, 19, 25, 31)
-                --AND o.price > 500
-            order BY
-                --o.ref_date,
-                o.order_num
-    """
-    query = detect(txt)
-    print(query)
+    mix(
+        """
+            select department, name from PERSON where age > 18 ORDER BY name
+        """,
+        """
+            SELECT
+                o.ref_date, o.quantity
+            FROM
+                Order(person_id) -> person(id)
+            order by
+                o.ref_date DESC
+        """
+    )
