@@ -1791,7 +1791,8 @@ class SQLParser(Parser):
                     break
             return start, end
         result, subqueries = {}, {}
-        txt = re.sub(r"\/\*.*\*\/", '', txt) # remove comments
+        txt = re.sub(r"\/\*.*\*\/", '', txt) # remove comments /* */
+        txt = re.sub(r'[-][-].*\n', '', txt) # remove comments --
         def raise_table_not_found(table: str):
             raise KeyError("Table '{}' not found in [{}]".format(
                 table, ', '.join(result.keys())
@@ -3001,18 +3002,21 @@ def execute(params: list, program: str='python -m sql_blocks') -> Select:
 
 if __name__ == "__main__":
     txt = """
-        SELECT
-            p.name,    
-            p.age /*
-                    gen_X=50
-                    gen_Z=17
-                    alpha=10
-                    bommer=70
-                    gen_Y=21
-            */
-        FROM
-            Person p
-        ORDER BY
-            p.name
+            select 
+                o.order_num,
+                --o.customer_id,
+                o.ref_date,
+                o.price,
+                o.quantity,
+                o.product_id
+            from 
+                Order o
+            where
+                o.store in (14, 19, 25, 31)
+                --AND o.price > 500
+            order BY
+                --o.ref_date,
+                o.order_num
     """
-    mix(txt)
+    query = detect(txt)
+    print(query)
