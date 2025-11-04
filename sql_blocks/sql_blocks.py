@@ -66,11 +66,12 @@ class SQLObject:
         if not alias:
             alias, table_name = cls.split_alias(table_name)
         names: list = cls.catalog.get(alias, [])
+        table_name = table_name.capitalize()
         if table_name not in names:
             names.append(table_name)
         cls.catalog[alias] = names
         if len(names) > 1:
-            pos = list(names).index(table_name) + 1
+            pos = names.index(table_name) + 1
             alias = f"{alias}{pos}"
         return alias
 
