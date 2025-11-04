@@ -2268,6 +2268,17 @@ class Select(SQLObject):
         return True
     
     def __sub__(self, other: SQLObject) -> SQLObject:        
+        if self.table_name.upper() == other.table_name.upper():
+            query: Select = self.copy()
+            REGEX_CONTENT = r'\w*[.]*\b(\w+)\b'
+            for key in USUAL_KEYS:
+                for expr in other.values.get(key, []):                    
+                    found = re.findall(fr"\w+[(]{REGEX_CONTENT}[)]", expr) # -- field from function
+                    if not found:
+                        found = re.findall(fr'^{REGEX_CONTENT}', expr)  # --- field at begining of expression
+                    field = found[0]
+                    query.delete(field, [key])
+            return query
         fk_field, primary_k = ForeignKey.find(self, other)
         if fk_field:
             query = self.copy()
@@ -2893,7 +2904,7 @@ def detect(text: str, join_method = join_queries, format: str='') -> Select | li
         result = join_method(result)
     return result
 
-def mix(main_script: str, complement: str='') -> Select:
+def mix(main_script: str, complement: str='', remove: bool=False) -> Select:
     """
     Completes a query using parts of another query.
     ---
@@ -2965,6 +2976,8 @@ def mix(main_script: str, complement: str='') -> Select:
     q2: Select = Select.parse(complement)[0]
     if is_join:
         return q1 + q2
+    if remove:
+        return q1 - q2
     return q1 * q2
 
 def execute(params: list, program: str='python -m sql_blocks') -> Select:
@@ -3000,6 +3013,11 @@ def execute(params: list, program: str='python -m sql_blocks') -> Select:
     SQLObject.ALIAS_FUNC = lambda t: t[0].lower()
     SQLObject.USE_CATALOG = True
     is_help: bool = False
+    fname: str = ''
+    # -------------------------------------------
+    def file_named_remove() -> bool:
+        return re.search( r"^[.\\\/]*[\rRr]EMOVE", fname, re.IGNORECASE )
+    # -------------------------------------------
     for i, param in enumerate(params[1:]):
         if i == 0:
             if param == '?':
@@ -3022,5 +3040,5 @@ def execute(params: list, program: str='python -m sql_blocks') -> Select:
             raise ValueError(f'{fname} does not exists.')
         with open(fname, 'r') as f:
             scripts.append( f.read() )
-    return mix(*scripts)
+    return mix( *scripts, remove=file_named_remove() )
 # ===========================================================================================//

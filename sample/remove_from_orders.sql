@@ -1,0 +1,1 @@
+select ref_date from Order where store is null order by ref_date
