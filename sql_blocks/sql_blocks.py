@@ -3002,7 +3002,7 @@ def execute(params: list, program: str='python -m sql_blocks') -> Select:
         '--optimize': (
             "   Optimizes query syntax.",
             Rule,
-            lambda txt, args: detect(txt).optimize()
+            lambda txt, args: detect(txt).optimize(args[0])
         ),
         '--cte': (
             "   Creates CTEs from subqueries in the script.",
@@ -3055,9 +3055,3 @@ def execute(params: list, program: str='python -m sql_blocks') -> Select:
             scripts.append( f.read() )
     return mix( *scripts, remove=file_named_remove() )
 # ===========================================================================================//
-
-
-if __name__ == "__main__":
-    # rules = Rule.find('PutLimit|SelectIN|AutoField|CalcColumn|LogicalOp|DateFunc|JoinToSub')
-    rules = Rule.find('PUTLIMIT|calccolumn|logicalOp|joinTosub')
-    for R in rules: print(R)
