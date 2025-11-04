@@ -1230,6 +1230,16 @@ class Rule:
             '\n'.join(f'\t{rule.__doc__}' for rule in cls.__subclasses__())
         ))
 
+    @classmethod
+    def find(cls, search: str) -> list['Rule']:
+        result = []
+        for rule in cls.__subclasses__():
+            found = re.findall(fr'^\s*({search})\s*[-]\s*', rule.__doc__, re.IGNORECASE)
+            if not found:
+                continue
+            result.append(rule)
+        return result
+
 
 class QueryLanguage:
     pattern = '{select}{_from}{where}{group_by}{order_by}{limit}'
@@ -2332,6 +2342,8 @@ class Select(SQLObject):
         return parser(txt, cls).queries
 
     def optimize(self, rules: list[Rule]=None):
+        if isinstance(rules, str):
+            rules = Rule.find(rules) or []
         if not rules:
             rules = Rule.__subclasses__()
         for rule in rules:
@@ -2757,7 +2769,7 @@ class RuleAutoField(Rule):
 
 class RuleCalcWithColumn(Rule):
     """
-    CalcWithColumn - It simplifies mathematical expressions involving
+    CalcColumn - It simplifies mathematical expressions involving
         columns, to isolate the fields of numerical constants.
     """
     @classmethod
@@ -2812,7 +2824,7 @@ class RuleLogicalOp(Rule):
 
 class RuleDateFuncReplace(Rule):
     """
-    DateFuncReplace - Replace conditions with YEAR function 
+    DateFunc - Replace conditions with YEAR function 
         wih their equivalent using BETWEEN.
     """
     REGEX = re.compile(r'(YEAR[(]|=|[)])', re.IGNORECASE)
@@ -2835,7 +2847,7 @@ class RuleDateFuncReplace(Rule):
 
 class RuleReplaceJoinBySubselect(Rule):
     """
-    ReplaceJoinBySubselect - Instead of a JOIN that return no fields,
+    JoinToSub - Instead of a JOIN that return no fields,
         it performs the condition using a subquery of that table.
     """
     @classmethod
@@ -3043,3 +3055,9 @@ def execute(params: list, program: str='python -m sql_blocks') -> Select:
             scripts.append( f.read() )
     return mix( *scripts, remove=file_named_remove() )
 # ===========================================================================================//
+
+
+if __name__ == "__main__":
+    # rules = Rule.find('PutLimit|SelectIN|AutoField|CalcColumn|LogicalOp|DateFunc|JoinToSub')
+    rules = Rule.find('PUTLIMIT|calccolumn|logicalOp|joinTosub')
+    for R in rules: print(R)
