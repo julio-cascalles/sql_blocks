@@ -31,6 +31,7 @@ class SQLObject:
     You can change the behavior by assigning 
     a user function to SQLObject.ALIAS_FUNC
     """
+    USE_CATALOG: bool = False
 
     catalog = {}
 
@@ -64,8 +65,9 @@ class SQLObject:
     def get_from_catalog(cls, table_name: str, alias: str='') -> str:
         if not alias:
             alias, table_name = cls.split_alias(table_name)
-        names: set = cls.catalog.get(alias, set())
-        names.add(table_name)
+        names: list = cls.catalog.get(alias, [])
+        if table_name not in names:
+            names.append(table_name)
         cls.catalog[alias] = names
         if len(names) > 1:
             pos = list(names).index(table_name) + 1
@@ -76,7 +78,7 @@ class SQLObject:
         if not table_name:
             return
         alias, table_name = self.split_alias(table_name)
-        self.__alias = alias # self.get_from_catalog(table_name, alias)
+        self.__alias = self.get_from_catalog(table_name, alias) if self.USE_CATALOG else alias
         self.values.setdefault(FROM, []).append(f'{table_name} {self.alias}')
 
     @property
@@ -2604,12 +2606,21 @@ class CTEFactory:
     * {t} = Table name
     * {f} = Field name  =  table_prefix + "_id"
 
-    > Example: txt="#AAA #BBB", template="SELECT * FROM {t} WHERE {f} = 217"
+    > Example: txt="#AAA #BBB", template="my_CTE_{t}[SELECT * FROM {t} WHERE {f} = 217]"
     ...results:
     ```
-        SELECT * FROM AAA WHERE aaa_id = 217
-        UNION
-        SELECT * FROM BBB WHERE bbb_id = 217
+        WITH my_CTE_AAA AS (
+            SELECT * FROM AAA a WHERE aaa_id = 217
+        ),
+        WITH my_CTE_BBB AS (
+            SELECT * FROM BBB b WHERE bbb_id = 217
+        ),
+        WITH All_ctes AS (
+            SELECT * FROM my_CTE_AAA m2
+                UNION ALL
+            SELECT * FROM my_CTE_BBB m1
+        )
+        SELECT * FROM All_ctes a
     ```
     """
 
@@ -2987,6 +2998,7 @@ def execute(params: list, program: str='python -m sql_blocks') -> Select:
         return
     scripts = []
     SQLObject.ALIAS_FUNC = lambda t: t[0].lower()
+    SQLObject.USE_CATALOG = True
     is_help: bool = False
     for i, param in enumerate(params[1:]):
         if i == 0:
@@ -3012,19 +3024,3 @@ def execute(params: list, program: str='python -m sql_blocks') -> Select:
             scripts.append( f.read() )
     return mix(*scripts)
 # ===========================================================================================//
-
-
-if __name__ == "__main__":
-    mix(
-        """
-            select department, name from PERSON where age > 18 ORDER BY name
-        """,
-        """
-            SELECT
-                o.ref_date, o.quantity
-            FROM
-                Order(person_id) -> person(id)
-            order by
-                o.ref_date DESC
-        """
-    )
