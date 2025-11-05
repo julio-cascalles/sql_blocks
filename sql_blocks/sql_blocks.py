@@ -1778,6 +1778,10 @@ class SQLParser(Parser):
         self.REGEX['tbl_join'] = re.compile(r"|".join(tbl_join), flags)
 
     def eval(self, txt: str):
+        result, subqueries = {}, {}
+        txt = re.sub(r"\/\*.*\*\/", '', txt) # remove comments /* */
+        txt = re.sub(r'[-][-].*\n', '', txt) # remove comments --
+        # -----------------------------------------------------------------------
         def find_last_word(pos: int) -> int:
             SPACE, WORD = 1, 2
             found = set()
@@ -1803,13 +1807,24 @@ class SQLParser(Parser):
                     end += i
                     break
             return start, end
-        result, subqueries = {}, {}
-        txt = re.sub(r"\/\*.*\*\/", '', txt) # remove comments /* */
-        txt = re.sub(r'[-][-].*\n', '', txt) # remove comments --
+        def and_without_where() -> tuple:
+            found = re.search(r'\band\b', txt, re.IGNORECASE)
+            if not found:
+                return None
+            start, end = found.span()
+            found = re.search(r'\bwhere\b', txt[:start], re.IGNORECASE)
+            if found:
+                return None
+            return start, end
         def raise_table_not_found(table: str):
             raise KeyError("Table '{}' not found in [{}]".format(
                 table, ', '.join(result.keys())
             ))
+        # -----------------------------------------------------------------------
+        found = and_without_where()
+        if found:
+            start, end = found
+            txt = txt[:start] + 'WHERE' + txt[end:]
         found = self.REGEX['subquery'].search(txt)
         while found:
             start, end = find_parenthesis(found)

@@ -8,7 +8,7 @@ SELECT
     o.discount
 FROM
     Order o
-WHERE
+AND
     o.store IN (27, 18, 49, 36)
     AND 
     o.price > 500
