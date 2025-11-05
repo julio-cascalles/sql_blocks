@@ -209,8 +209,8 @@ def test_dialects():
     expected = {
         "ANSI": "Current_Date() - due_date",
         "SQL_SERVER": "DateDiff(getDate(), due_date)",
-        "ORACLE": "SYSDATE - due_date",
-        "POSTGRESQL": "Current_date - due_date",
+        "ORACLE": "SYSDATE() - due_date",
+        "POSTGRESQL": "Current_date() - due_date",
         "MYSQL": "Current_Date() - due_date"
     }
     assert DateDiff_function_variants() == expected

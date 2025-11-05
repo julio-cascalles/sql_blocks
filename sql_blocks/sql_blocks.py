@@ -264,14 +264,48 @@ class Code:
 
 
 class Dialect(Enum):
-    ANSI = 0
-    SQL_SERVER = 1
-    ORACLE = 2
-    POSTGRESQL = 3
-    MYSQL = 4
+    ANSI        = ""
+    SQL_SERVER  = "SqlServer"
+    ORACLE      = "Oracle"
+    POSTGRESQL  = "PostgreSql"
+    MYSQL       = "mySql"
+
+    @classmethod
+    def help(cls) -> str:
+        print( "Dialects:\n{}".format(
+            '\n'.join( f'\t{dialect.value}' for dialect in cls if dialect.value )
+        ) )
+    
+    @classmethod
+    def by_name(cls, name: str) -> 'Dialect':
+        for dialect in cls:
+            if name and name.lower() == dialect.value.lower():
+                return dialect
+        return cls.ANSI
+
 
 SQL_TYPES = 'CHAR INT DATE FLOAT ANY'.split()
 CHAR, INT, DATE, FLOAT, ANY  =  SQL_TYPES
+
+
+class DialectInfo:
+    def __init__(self, txt: str, dialect: Dialect=None):
+        self.txt = txt
+        self.func_types = {
+            func_name: class_type 
+            for func_name in re.findall(r"(\w+)[(]", txt)
+            for class_type in Function.descendants()
+            if class_type.match(func_name, dialect)
+        }
+
+    def set_dialect(self, new_dialect: Dialect|str):
+        if isinstance(new_dialect, str):
+            new_dialect = Dialect.by_name(new_dialect)
+        Function.dialect = new_dialect
+        for func_name, class_type in self.func_types.items():
+            self.txt = self.txt.replace( f"{func_name}(", class_type.name()+'(' )
+        return self
+
 
 class Function(Code):
     dialect = Dialect.ANSI
@@ -301,6 +335,20 @@ class Function(Code):
         self.pattern = self.get_pattern()
         super().__init__()
 
+
+    @classmethod
+    def name(cls) -> str:
+        return cls.alternative_names().get(cls.dialect,  cls.__name__)
+    
+    @classmethod
+    def match(cls, func_name: str, filter: Dialect=None) -> bool:
+        for dialect, name in cls.alternative_names().items():
+            if filter and filter != dialect:
+                continue
+            if func_name.lower() == name.lower():
+                return True
+        return False
+    
     @classmethod
     def descendants(cls) -> list:
         result = []
@@ -309,12 +357,19 @@ class Function(Code):
             result += sub.descendants()
         return result
     
+    @classmethod
+    def alternative_names(cls) -> dict:
+        """
+        Names of function in other dialects.
+        """
+        return {}
+
     def get_pattern(self) -> str:
         return '{func_name}({params})'
 
     def __str__(self) -> str:
         return self.pattern.format(
-            func_name=self.__class__.__name__,
+            func_name=self.name(),
             params=self.separator.join(str(p) for p in self.params)
         )
 
@@ -385,6 +440,7 @@ class Function(Code):
 
 
 
+
 # ---- String Functions: ---------------------------------
 class SubString(Function):
     """
@@ -393,10 +449,12 @@ class SubString(Function):
     inputs = [CHAR, INT, INT]
     output = CHAR
 
-    def get_pattern(self) -> str:
-        if self.dialect in (Dialect.ORACLE, Dialect.MYSQL):
-            return 'Substr({params})'
-        return super().get_pattern()
+    @classmethod
+    def alternative_names(cls) -> dict:
+        return {
+            Dialect.ORACLE: 'Substr',
+            Dialect.MYSQL: 'Substr'
+        }
 
 
 class Re(Function):
@@ -406,11 +464,18 @@ class Re(Function):
     inputs = [CHAR, CHAR, INT, INT]
     output = CHAR
 
-    def get_pattern(self) -> str:
-        if self.dialect == Dialect.POSTGRESQL:
-            return 'Substring({params})'
-        return 'Regexp_Substr({params})'
+    @classmethod
+    def alternative_names(cls) -> dict:
+        return {
+            Dialect.POSTGRESQL: 'Substring'
+        }
     
+    @classmethod
+    def name(cls) -> str:
+        if cls.dialect != Dialect.POSTGRESQL:
+            return 'Regexp_Substr'
+        return super().name()
+ 
     @classmethod
     def number_before(cls, string: str, start: int=None, end:int=None):
         return cls(fr'(\d+)\s*{string}', start, end)
@@ -475,14 +540,19 @@ class DatePart(Function):
     inputs = [DATE]
     output = INT
 
+    @classmethod
+    def alternative_names(cls) -> dict:
+        return {
+            Dialect.ORACLE: 'Extract',
+            Dialect.POSTGRESQL: "Date_Part"
+        }
+
     def get_pattern(self) -> str:
         interval = self.__class__.__name__
-        database_type = {
-            Dialect.ORACLE: 'Extract('+interval+' FROM {params})',
-            Dialect.POSTGRESQL: "Date_Part('"+interval+"', {params})",
-        }
-        if self.dialect in database_type:
-            return database_type[self.dialect]
+        if self.dialect == Dialect.POSTGRESQL:
+            self.params.insert(0, interval)
+        elif self.dialect == Dialect.ORACLE and self.params:
+            self.params[0] = f'{interval}  FROM {self.params[0]}'
         return super().get_pattern()
 
     @classmethod
@@ -491,26 +561,37 @@ class DatePart(Function):
         return result.replace('DatePart ', "Date Function ")
 
 class Year(DatePart):
-    ...
+    @classmethod
+    def alternative_names(cls) -> dict:
+        return {}
+
+
 class Month(DatePart):
-    ...
+    @classmethod
+    def alternative_names(cls) -> dict:
+        return {}
+
+
 class Day(DatePart):
-    ...
+    @classmethod
+    def alternative_names(cls) -> dict:
+        return {}
+
+
 
 
 class Current_Date(Function):
     output = DATE
 
-    def get_pattern(self) -> str:
-        database_type = {
+    @classmethod
+    def alternative_names(cls) -> dict:
+        return {
             Dialect.ORACLE: SQL_CONST_SYSDATE,
             Dialect.POSTGRESQL: SQL_CONST_CURR_DATE,
-            Dialect.SQL_SERVER: 'getDate()'
+            Dialect.SQL_SERVER: 'getDate'
         }
-        if self.dialect in database_type:
-            return database_type[self.dialect]
-        return super().get_pattern()
 # --------------------------------------------------------
+
 
 class Frame:
     break_lines: bool = True
@@ -2963,7 +3044,8 @@ def mix(main_script: str, complement: str='', remove: bool=False) -> Select:
                 args = re.findall(r"(\w+)[=](\w+)", comment)
             else:
                 result = field
-                field = ''
+                found = re.findall(r'^(\w+)[:]', comment.strip())
+                field = found[0] if found else ''
                 class_type = Range
                 names = re.findall(r'(\w+)=', comment)
                 values = re.findall(r'=(\d+)', comment)
@@ -3028,6 +3110,11 @@ def execute(params: list, program: str='python -m sql_blocks') -> Select:
             ":<language>  Translate the script into the specified language.",
             LanguageEnum,
             lambda txt, args: detect(txt).translate_to(args[0])
+        ),
+        '--dialect': (
+            "   Convert function names from one database type to another.",
+            Dialect,
+            lambda txt, args: DialectInfo(txt).set_dialect(args[0]).txt
         ),
     }
     if len(params) != 3:
