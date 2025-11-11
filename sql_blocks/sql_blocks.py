@@ -464,6 +464,11 @@ class Re(Function):
     inputs = [CHAR, CHAR, INT, INT]
     output = CHAR
 
+    def __init__(self, string: str, start: int=None, end:int=None):
+        super().__init__(
+            quoted(string), start, end
+        )
+
     @classmethod
     def alternative_names(cls) -> dict:
         return {
@@ -1860,6 +1865,7 @@ class SQLParser(Parser):
 
     def eval(self, txt: str):
         result, subqueries = {}, {}
+        txt = re.sub(r'[\[\]]', '', txt.replace('"', "'"))
         txt = re.sub(r"\/\*.*\*\/", '', txt) # remove comments /* */
         txt = re.sub(r'[-][-].*\n', '', txt) # remove comments --
         # -----------------------------------------------------------------------
@@ -2809,6 +2815,61 @@ class CTEFactory:
 
 # ----- Rules -----
 
+class RuleAlwaysTrue(Rule):
+    """
+    AlwaysTrue - Remove conditions like 1 = 1 or similar...
+    """
+    @staticmethod
+    def notorious(expr: str) -> bool:
+        """
+        🎵🎶🎼 No-no-notorious, notorious 🎼🎶🎵
+        """
+        left, right = [], []
+        sep = ''
+        curr = left
+        for i, side in enumerate( re.split('(>=|<=|=|>|<)', expr) ):
+            if any(s in '=<>' for s in side):
+                sep = side.strip()
+                if sep == '=':
+                    sep = '=='
+                curr = right
+                continue
+            found = re.findall(r'(\w+)(\W+)(\w+)*', side)
+            if found:
+                v1, op, v2 = found[0]
+            else:
+                v1, op, v2 = side, '', ''
+            op = op.strip()
+            if op and op not in ('+', '-'):
+                return False # --- operations not supported
+            for j, var in enumerate([v1, v2]):
+                var = var.strip()
+                if i > 0 and var.isidentifier() and var in left:
+                    left.remove(var)
+                elif var:
+                    if j == 1:
+                        curr.append(op)
+                    curr.append(var)
+        expr = '{}{}{}'.format(
+            ''.join(left) if left else '0',
+            sep,
+            ''.join(right) if right else '0',
+        )
+        try:
+            return eval(expr)
+        except:
+            return False
+        
+    @classmethod
+    def apply(cls, target: Select):
+        result = []
+        for condition in target.values.get(WHERE, []):
+            if cls.notorious(condition):
+                continue
+            result.append(condition)
+        target.values[WHERE] = result
+
+
 class RulePutLimit(Rule):
     """
     PutLimit - It limits the number of records to 100 if there is no WHERE clause
@@ -3157,3 +3218,14 @@ def execute(params: list, program: str='python -m sql_blocks') -> Select:
             scripts.append( f.read() )
     return mix( *scripts, remove=file_named_remove() )
 # ===========================================================================================//
+
+
+if __name__ == "__main__":
+    query = detect(
+            "SELECT * FROM payment"
+            "WHERE due_date + 1 > due_date AND 1 = 1"  # --- Notorious conditions
+            "       AND year(due_date) = 2024"
+            "ORDER BY customer"
+    )
+    query.optimize()
+    print(query)
