@@ -2410,6 +2410,11 @@ class Select(SQLObject):
     def __mul__(self,other: SQLObject) -> SQLObject:
         query = self.copy()
         for key in USUAL_KEYS:
+            if key == WHERE:
+                conditions = query.values[key]
+                for i, curr_cond in enumerate(conditions):
+                    if '.' not in curr_cond:
+                        conditions[i] = query.alias + '.' + curr_cond
             query.update_values(key, other.values.get(key, []))
         return query
 
@@ -2458,6 +2463,7 @@ class Select(SQLObject):
         if not has_partition:
             class_types += [Field]
         FieldList(fields, class_types).add('', self)
+        return self
 
     def translate_to(self, language: QueryLanguage|str|LanguageEnum) -> str:
         if isinstance(language, str):
@@ -3043,7 +3049,7 @@ def parser_class(text: str) -> Parser:
     for regex, class_type in PARSER_REGEX:
         if re.findall(regex, text, re.IGNORECASE):
             return class_type
-    return None
+    return SQLParser if text.strip() else None
 
 def join_queries(query_list: list) -> Select:
     result = query_list[0]

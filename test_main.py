@@ -42,6 +42,9 @@ from tests.cte import(
     compare_factory_result, compare_query_list,
     cte_factory_cypher_results
 )
+from tests.mix import (
+    p1_mix_p2, pivot_summary, remove_mix, compare_mix_join
+)
 
 
 _best_movies = best_movies()
@@ -288,3 +291,17 @@ def test_cte_query_list():
 def test_ctefactory_cypher():
     cte_names = ['Sales_by_Employee', 'Sales_by_Customer', 'Sales_by_Supplier', 'All_people']
     assert cte_factory_cypher_results() == cte_names
+
+def test_simple_mix():
+    assert p1_mix_p2()
+
+def test_pivot_mix():
+    res = pivot_summary()
+    assert res['region'] == ['north_east', 'south_west']
+    assert res['month_ref'] == ['10', '11', '12']
+
+def test_remove_mix():
+    assert remove_mix()
+
+def test_compare_mix_join():
+    assert compare_mix_join()
