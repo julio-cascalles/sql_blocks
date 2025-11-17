@@ -319,6 +319,9 @@ class Function(Code):
     def __init__(self, *params: list):
         # ----------------------------------------
         def set_func_types(param):
+            if param in Function.descendants():
+                class_type = param
+                param = class_type()
             if self.auto_convert and isinstance(param, Function):
                 func = param
                 main_param = self.inputs[0]
@@ -3227,11 +3230,10 @@ def execute(params: list, program: str='python -m sql_blocks') -> Select:
 
 
 if __name__ == "__main__":
-    query = detect(
-            "SELECT * FROM payment"
-            "WHERE due_date + 1 > due_date AND 1 = 1"  # --- Notorious conditions
-            "       AND year(due_date) = 2024"
-            "ORDER BY customer"
+    query = Select.parse(
+        "SELECT customer_id FROM Sales s WHERE status = 'pending' GROUP BY customer_id"
+    )[0]
+    query(
+        payment=Re(r'[.](\d+)', Max).As('cents')
     )
-    query.optimize()
     print(query)
