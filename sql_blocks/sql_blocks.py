@@ -749,13 +749,10 @@ class FieldList:
 
 
 class TypedField(Field):
-    def __init__(self, primary_key: bool, foreign_key: bool):
+    def __init__(self, attributes: list, size: int = 0):
         super().__init__()
-        self.attributes = []
-        if primary_key:
-            self.attributes.append(PrimaryKey)
-        if foreign_key:
-            self.attributes.append(ForeignKey)
+        self.attributes = attributes
+        self.size = size
 
 class IntField(TypedField):
     ...
@@ -771,6 +768,7 @@ FIELD_CLASS_BY_TYPE = {
     INT: IntField,
     FLOAT: FloatField,
     CHAR: CharField,
+    'VARCHAR': CharField,
     DATE: DateField,
 }
 
@@ -1856,10 +1854,11 @@ class Parser:
     def prepare(self):
         ...
 
-    def __init__(self, txt: str, class_type):
+    def __init__(self, txt: str, class_type: type, schema: 'Schema'=None):
         self.queries = []
         self.prepare()
         self.class_type = class_type
+        self.schema = schema
         self.eval(txt)
 
     def eval(self, txt: str):
@@ -2034,6 +2033,8 @@ class CypherParser(Parser):
         token, *more = re.split(r"([|@])", token)
         if not token.isidentifier():
             return
+        if self.schema:
+            token = self.schema.more_similar(token)
         table_name = f'{token} {alias}' if alias else token
         query = self.class_type(table_name)
         if not alias:
@@ -2069,6 +2070,9 @@ class CypherParser(Parser):
                 pk_field = self.queries[-1].values[SELECT][pos]
             self.queries[-1].key_field = pk_field.split('.')[-1]
             return
+        if self.schema and self.queries:
+            last_query: Select = self.queries[-1]
+            token = self.schema.more_similar(token, last_query.table_name)
         # -------------------------------------------------------
         def field_params() -> dict:
             ROLE_OF_SEPARATOR = {
@@ -2119,6 +2123,7 @@ class CypherParser(Parser):
         self.new_query(token, JoinType.RIGHT)
 
     def add_foreign_key(self, token: str, pk_field: str=''):
+        # ----------------------------------------------------
         def extract_field(query: Select, pos: int) -> str:
             fields = [
                 fld for fld in query.values[SELECT]
@@ -2127,13 +2132,20 @@ class CypherParser(Parser):
             result  = fields[pos].split('.')[-1]
             query.delete(result, [SELECT], exact=True)
             return result
-        curr, last = [self.queries[i] for i in (-1, -2)]
+        # ----------------------------------------------------
+        curr: Select = self.queries[-1]
+        last: Select = self.queries[-2]
+        found = ForeignKey.find(curr, last)
+        if found == ('', ''):
+            found = ForeignKey.find(last, curr)
         if not pk_field:
-            if last.key_field:
+            if found[1]:
+                pk_field = found[1]
+            elif last.key_field:
                 pk_field = last.key_field
+            elif not last.values.get(SELECT):
+                raise IndexError(f'Primary Key not found for {last.table_name}.')
             else:
-                if not last.values.get(SELECT):
-                    raise IndexError(f'Primary Key not found for {last.table_name}.')
                 pk_field = extract_field(last, -1)
         if '{}' in token:
             foreign_fld = token.format(
@@ -2142,9 +2154,12 @@ class CypherParser(Parser):
                 curr.table_name.lower()
             )
         else:
-            if not curr.values.get(SELECT):
+            if found[0]:
+                foreign_fld = found[0]
+            elif not curr.values.get(SELECT):
                 raise IndexError(f'Foreign Key not found for {curr.table_name}.')
-            foreign_fld = extract_field(curr, 0)
+            else:
+                foreign_fld = extract_field(curr, 0)
             if curr.join_type == JoinType.RIGHT:
                 pk_field, foreign_fld = foreign_fld, pk_field
         if curr.join_type == JoinType.RIGHT:
@@ -3296,40 +3311,58 @@ class Schema:
             for field, ftype, *attrib_list in re.findall(REGEX_FIELD_ATTRIB, content, re.IGNORECASE):
                 if not field:
                     continue
-                class_type = FIELD_CLASS_BY_TYPE.get(ftype, TypedField)
+                size = 0
+                if '(' in ftype:
+                    ftype, size, _ = re.split(r'[()]', ftype)
+                    size = int(size)
+                class_type = FIELD_CLASS_BY_TYPE.get(ftype.upper(),TypedField)
                 for i, attrib in enumerate(attrib_list):
                     attrib = attrib.strip().upper()
                     if attrib == 'PRIMARY KEY':
-                        class_type = class_type(primary_key = True)
+                        class_type = class_type([PrimaryKey], size)
                         break
                     if attrib == 'REFERENCES':
                         ref_table, *attrib_list = attrib_list[i+1:]
-                        if attrib_list:
+                        if attrib_list and attrib_list[0]:
                             ref_field = attrib_list[0]
                         elif ref_table in summary:
                             ref_field = summary[ref_table].find_attribute(PrimaryKey)
                         else:
                             ref_field = ''
-                        class_type = class_type(foreign_key = True)
+                        class_type = class_type([ForeignKey], size)
                         ForeignKey.references[(name, ref_table)] = (field, ref_field)
                         break
                 table.add_field(field, class_type)                
             summary[name] = table
         self.summary = summary
 
+    def more_similar(self, search: str, table_name: str='') -> str:
+        source = self.summary
+        if table_name:
+            table: Table = source[table_name]
+            source = table.fields
+        for key in source:
+            if key.upper().startswith(search.upper()):
+                return key
+        return search
+    
+    def find_primary_key(self, table_name: str) -> str:
+        if table_name not in self.summary:
+            return ''
+        table: Table = self.summary[table_name]
+        return table.find_attribute(PrimaryKey)
 
 
 # ===========================================================================================//
 
 
 if __name__ == "__main__":
-    # CypherParser
     schema = Schema("""
         create table Customer(
            id int primary key, primary key
            driver_licence char(13), 
            name varchar(255),
-           region in /*     1=North
+           region int /*     1=North
                             2=South
                             3=East
                             4=West
@@ -3348,8 +3381,13 @@ if __name__ == "__main__":
            order_num int primary key
         )
     """)
-    # 'c(na,re) <- s() -> p(na,pri)'
+    SQLObject.ALIAS_FUNC = lambda t: t[0].lower()
+    c, s, p = CypherParser('c(na,re) <- s() -> p(na,pri)', Select, schema).queries
+    for query in (c, s, p):
+        print(query)
+        print('---------------------------------------------')
     # --------------------- Should returns: -------------------------------------------------------
     #   Customer(name, region, driver_licence) <- Sales(cus_id, pro_id) -> Product(id, name, price)
     # ---------------------------------------------------------------------------------------------//
-    # print(script)
+    query = c + s + p
+    print(query)
