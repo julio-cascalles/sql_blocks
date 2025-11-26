@@ -353,9 +353,11 @@ class Function(Code):
         return False
     
     @classmethod
-    def descendants(cls) -> list:
+    def descendants(cls, func_type: str='') -> list:
         result = []
         for sub in cls.__subclasses__():
+            if func_type and sub.output != func_type:
+                continue
             result.append(sub)
             result += sub.descendants()
         return result
@@ -466,11 +468,6 @@ class Re(Function):
     """
     inputs = [CHAR, CHAR, INT, INT]
     output = CHAR
-
-    def __init__(self, string: str, start: int=None, end:int=None):
-        super().__init__(
-            quoted(string), start, end
-        )
 
     @classmethod
     def alternative_names(cls) -> dict:
@@ -751,10 +748,50 @@ class FieldList:
                 class_type.add(field, main)
 
 
+class TypedField(Field):
+    def __init__(self, primary_key: bool, foreign_key: bool):
+        super().__init__()
+        self.attributes = []
+        if primary_key:
+            self.attributes.append(PrimaryKey)
+        if foreign_key:
+            self.attributes.append(ForeignKey)
+
+class IntField(TypedField):
+    ...
+class FloatField(TypedField):
+    ...
+class CharField(TypedField):
+    ...
+class DateField(TypedField):
+    ...
+
+
+FIELD_CLASS_BY_TYPE = {
+    INT: IntField,
+    FLOAT: FloatField,
+    CHAR: CharField,
+    DATE: DateField,
+}
+
+
 class Table(FieldList):
     def add(self, name: str, main: SQLObject):
         main.set_table(name)
         super().add(name, main)
+
+    def add_field(self, field: str, class_type: TypedField=TypedField):
+        self.fields.append(field)
+        self.class_types.append(class_type)
+
+    def find_attribute(self, search: type) -> str:
+        for field, cls in zip(self.fields, self.class_types):
+            if not isinstance(cls, TypedField):
+                continue
+            cls: TypedField
+            if search in cls.attributes:
+                return field
+        return ''
 
 
 class PrimaryKey:
@@ -3226,14 +3263,93 @@ def execute(params: list, program: str='python -m sql_blocks') -> Select:
         with open(fname, 'r') as f:
             scripts.append( f.read() )
     return mix( *scripts, remove=file_named_remove() )
+
+
+class Schema:
+
+    def __init__(self, txt: str):
+        def char_type_regex(ftype: str) -> str:
+            if ftype.endswith('CHAR'):
+                return fr'({ftype})[(](\d+)[)]'
+            return ftype
+        # ------ Remove comments: ------------------------
+        while True:
+            found = re.search(r'/\*([\s\S]*?)\*/', txt)
+            if not found:
+                found = re.search(r'[-][-]([\s\S]*?)\n', txt)
+            if not found:
+                break
+            start, end = found.span()
+            txt = txt[:start] + txt[end:]
+        # ------------------------------------------------
+        txt += ';'
+        # -------------------------------------------------
+        REGEX_CREATE_TABLE = r"CREATE TABLE\s+(\w+)\s*[(]([\s\S^\)]*?)[)]\s*[;]"
+        REGEX_FIELD_ATTRIB = "{prefix}({types}){sep}({foreign}|{constraints}|{default})*".format(
+            prefix=r'(\w+)\s+', foreign=r'(REFERENCES)\s+(\w+)[(](\w*)[)]', sep=r'\s*',
+            default=r'(DEFAULT)\s+(\w+)', constraints='PRIMARY KEY|NOT NULL|UNIQUE',
+            types='|'.join(char_type_regex(ftype) for ftype in SQL_TYPES + ['VARCHAR']),
+        )
+        summary = {}
+        for name, content in re.findall(REGEX_CREATE_TABLE, txt, re.IGNORECASE):
+            table = Table([], [], ziped=True)
+            for field, ftype, *attrib_list in re.findall(REGEX_FIELD_ATTRIB, content, re.IGNORECASE):
+                if not field:
+                    continue
+                class_type = FIELD_CLASS_BY_TYPE.get(ftype, TypedField)
+                for i, attrib in enumerate(attrib_list):
+                    attrib = attrib.strip().upper()
+                    if attrib == 'PRIMARY KEY':
+                        class_type = class_type(primary_key = True)
+                        break
+                    if attrib == 'REFERENCES':
+                        ref_table, *attrib_list = attrib_list[i+1:]
+                        if attrib_list:
+                            ref_field = attrib_list[0]
+                        elif ref_table in summary:
+                            ref_field = summary[ref_table].find_attribute(PrimaryKey)
+                        else:
+                            ref_field = ''
+                        class_type = class_type(foreign_key = True)
+                        ForeignKey.references[(name, ref_table)] = (field, ref_field)
+                        break
+                table.add_field(field, class_type)                
+            summary[name] = table
+        self.summary = summary
+
+
+
 # ===========================================================================================//
 
 
 if __name__ == "__main__":
-    query = Select.parse(
-        "SELECT customer_id FROM Sales s WHERE status = 'pending' GROUP BY customer_id"
-    )[0]
-    query(
-        payment=Re(r'[.](\d+)', Max).As('cents')
-    )
-    print(query)
+    # CypherParser
+    schema = Schema("""
+        create table Customer(
+           id int primary key, primary key
+           driver_licence char(13), 
+           name varchar(255),
+           region in /*     1=North
+                            2=South
+                            3=East
+                            4=West
+           ****************************************************/
+        );
+        create table Product(
+           serial_number int primary key,
+           name varchar(255) unique,
+           price float not null
+        );
+        create table Sales(
+           pro_id int references Product(), -- serial number
+           cus_id char(13) references Customer(driver_licence)
+           quantity float default 1,
+           ref_date date,
+           order_num int primary key
+        )
+    """)
+    # 'c(na,re) <- s() -> p(na,pri)'
+    # --------------------- Should returns: -------------------------------------------------------
+    #   Customer(name, region, driver_licence) <- Sales(cus_id, pro_id) -> Product(id, name, price)
+    # ---------------------------------------------------------------------------------------------//
+    # print(script)
