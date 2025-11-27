@@ -1,1 +1,1 @@
-c(na,re) <- s(q,ref) -> p(na,pri)
+c(na,re) <- s(q ^ref) -> p(na,pri)

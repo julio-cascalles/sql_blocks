@@ -764,18 +764,18 @@ class DateField(TypedField):
     ...
 
 
-FIELD_CLASS_BY_TYPE = {
-    INT: IntField,
-    FLOAT: FloatField,
-    CHAR: CharField,
-    'VARCHAR': CharField,
-    DATE: DateField,
-}
-
-
 class Table(FieldList):
+    FIELD_CLASS_BY_TYPE = {
+        INT: IntField,
+        FLOAT: FloatField,
+        CHAR: CharField,
+        'VARCHAR': CharField,
+        DATE: DateField,
+    }
+
     def add(self, name: str, main: SQLObject):
-        main.set_table(name)
+        if name:
+            main.set_table(name)
         super().add(name, main)
 
     def add_field(self, field: str, class_type: TypedField=TypedField):
@@ -788,6 +788,13 @@ class Table(FieldList):
                 continue
             cls: TypedField
             if search in cls.attributes:
+                return field
+        return ''
+    
+    def field_for_function(self, function: Function) -> str:
+        search = self.FIELD_CLASS_BY_TYPE.get( function.inputs[0] )
+        for field, cls in zip(self.fields, self.class_types):
+            if cls == search:
                 return field
         return ''
 
@@ -2035,6 +2042,7 @@ class CypherParser(Parser):
         if not token.isidentifier():
             return
         if self.schema:
+            alias = token
             token = self.schema.more_similar(token)
         table_name = f'{token} {alias}' if alias else token
         query = self.class_type(table_name)
@@ -2064,16 +2072,6 @@ class CypherParser(Parser):
     def add_field(self, token: str, class_types: list = None):
         if token in self.TOKEN_METHODS:
             return
-        if '*' in token:
-            pk_field = token.replace('*', '')
-            if not pk_field.isidentifier():
-                pos = int(pk_field or '1')-1
-                pk_field = self.queries[-1].values[SELECT][pos]
-            self.queries[-1].key_field = pk_field.split('.')[-1]
-            return
-        if self.schema and self.queries:
-            last_query: Select = self.queries[-1]
-            token = self.schema.more_similar(token, last_query.table_name)
         # -------------------------------------------------------
         def field_params() -> dict:
             ROLE_OF_SEPARATOR = {
@@ -2093,6 +2091,7 @@ class CypherParser(Parser):
             if alias or is_count:
                 field, alias = alias, field
             extra_classes = class_types or []
+            query: Select = self.queries[-1]
             if group:
                 if not field:
                     field = group
@@ -2101,16 +2100,20 @@ class CypherParser(Parser):
                 extra_classes += [GroupBy]
             if function:                
                 if is_count and not field:
-                    field = self.queries[-1].key_field or 'id'
+                    field = query.key_field or 'id'
                 func_class = FUNCTION_CLASS.get(function)
                 if not func_class:
                     raise ValueError(f'Unknown function `{function}`.')
                 class_list = [ func_class().As(alias, extra_classes) ]
+                if not field and self.schema:
+                    field = self.schema.field_for_function(query.table_name, func_class)
             elif alias:
                 class_list = [NamedField(alias)] + extra_classes
             else:
                 class_list = [Field] + extra_classes
-            FieldList(field, class_list).add('', self.queries[-1])
+            if self.schema and self.queries:
+                field = self.schema.more_similar(field, query.table_name)
+            FieldList(field, class_list).add('', query)
         # -------------------------------------------------------
         run( **field_params() )
         # -------------------------------------------------------
@@ -3155,6 +3158,8 @@ def mix(main_script: str, complement: str='', remove: bool=False) -> Select:
         t1, t2 = [table.lower().strip() for table in (t1, t2)]
         return t1 == t2
     parser: Parser = parser_class(main_script)
+    if parser == CypherParser and CypherParser.public_schema:
+        SQLObject.ALIAS_FUNC = None
     q1, *others = parser(main_script, Select).queries
     # ----------------------------------------------------
     def extract_comments() -> bool:
@@ -3180,7 +3185,7 @@ def mix(main_script: str, complement: str='', remove: bool=False) -> Select:
     is_join: bool = False
     if not complement:
         try:
-            if parser == CypherParser:
+            if parser == CypherParser:                
                 q1 = join_queries([q1] + others)
             elif parser == SQLParser:
                 extract_comments()
@@ -3318,9 +3323,10 @@ class Schema:
         txt += ';'
         # -------------------------------------------------
         REGEX_CREATE_TABLE = r"CREATE TABLE\s+(\w+)\s*[(]([\s\S^\)]*?)[)]\s*[;]"
+        REGEX_FOREIGN = r'(REFERENCES)\s+(\w+)'
         REGEX_FIELD_ATTRIB = "{prefix}({types}){sep}({foreign}|{constraints}|{default})*".format(
-            prefix=r'(\w+)\s+', foreign=r'(REFERENCES)\s+(\w+)[(](\w*)[)]', sep=r'\s*',
-            default=r'(DEFAULT)\s+(\w+)', constraints='PRIMARY KEY|NOT NULL|UNIQUE',
+            prefix=r'(\w+)\s+', foreign=fr'{REGEX_FOREIGN}[(](\w+)[)]|{REGEX_FOREIGN}\s*[,\n]',
+            default=r'(DEFAULT)\s+(\w+)', constraints='PRIMARY KEY|NOT NULL|UNIQUE',  sep=r'\s*',
             types='|'.join(char_type_regex(ftype) for ftype in SQL_TYPES + ['VARCHAR']),
         )
         summary = {}
@@ -3333,7 +3339,7 @@ class Schema:
                 if '(' in ftype:
                     ftype, size, _ = re.split(r'[()]', ftype)
                     size = int(size)
-                class_type = FIELD_CLASS_BY_TYPE.get(ftype.upper(),TypedField)
+                class_type = Table.FIELD_CLASS_BY_TYPE.get(ftype.upper(), TypedField)
                 for i, attrib in enumerate(attrib_list):
                     attrib = attrib.strip().upper()
                     if attrib == 'PRIMARY KEY':
@@ -3364,48 +3370,38 @@ class Schema:
                 return key
         return search
     
-    def find_primary_key(self, table_name: str) -> str:
-        if table_name not in self.summary:
-            return ''
-        table: Table = self.summary[table_name]
-        return table.find_attribute(PrimaryKey)
+    def field_for_function(self, table_name: str, function: Function) -> str:
+        table: Table = self.summary.get(table_name)
+        return table.field_for_function(function) if table else ''
 
-
+    
 # ===========================================================================================//
 
 
-# if __name__ == "__main__":
-#     schema = Schema("""
-#         create table Customer(
-#            id int primary key, primary key
-#            driver_licence char(13), 
-#            name varchar(255),
-#            region int /*     1=North
-#                             2=South
-#                             3=East
-#                             4=West
-#            ****************************************************/
-#         );
-#         create table Product(
-#            serial_number int primary key,
-#            name varchar(255) unique,
-#            price float not null
-#         );
-#         create table Sales(
-#            pro_id int references Product(), -- serial number
-#            cus_id char(13) references Customer(driver_licence)
-#            quantity float default 1,
-#            ref_date date,
-#            order_num int primary key
-#         )
-#     """)
-#     SQLObject.ALIAS_FUNC = lambda t: t[0].lower()
-#     c, s, p = CypherParser('c(na,re) <- s() -> p(na,pri)', Select, schema).queries
-#     for query in (c, s, p):
-#         print(query)
-#         print('---------------------------------------------')
-#     # --------------------- Should returns: -------------------------------------------------------
-#     #   Customer(name, region, driver_licence) <- Sales(cus_id, pro_id) -> Product(id, name, price)
-#     # ---------------------------------------------------------------------------------------------//
-#     query = c + s + p
-#     print(query)
+if __name__ == "__main__":
+    CypherParser.public_schema = Schema('''
+        create table Customer(
+            id int primary key,
+            driver_licence char(13), 
+            name varchar(255),
+            region int /*     1=North
+                            2=South
+                            3=East
+                            4=West
+            ****************************************************/
+        );
+        create table Product(
+            serial_number int primary key,
+            name varchar(255) unique,
+            price float not null
+        );
+        create table Sales(
+            pro_id int references Product, -- serial number
+            cus_id char(13) references Customer(driver_licence)
+            quantity float default 1,
+            ref_date date,
+            order_num int primary key
+        )
+    ''')
+    query = join_queries( CypherParser('p(sum$)', Select).queries )
+    print(query)

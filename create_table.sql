@@ -14,7 +14,7 @@ create table Product(
     price float not null
 );
 create table Sales(
-    pro_id int references Product(), -- serial number
+    pro_id int references Product, -- serial number
     cus_id char(13) references Customer(driver_licence)
     quantity float default 1,
     ref_date date,
