@@ -1850,6 +1850,7 @@ class SparkLanguage(PandasLanguage):
 
 class Parser:
     REGEX = {}
+    public_schema: 'Schema' = None
 
     def prepare(self):
         ...
@@ -1858,7 +1859,7 @@ class Parser:
         self.queries = []
         self.prepare()
         self.class_type = class_type
-        self.schema = schema
+        self.schema = schema or self.public_schema
         self.eval(txt)
 
     def eval(self, txt: str):
@@ -2136,11 +2137,13 @@ class CypherParser(Parser):
         curr: Select = self.queries[-1]
         last: Select = self.queries[-2]
         found = ForeignKey.find(curr, last)
+        i, j = 1, 0
         if found == ('', ''):
             found = ForeignKey.find(last, curr)
+            i, j = 0, 1
         if not pk_field:
-            if found[1]:
-                pk_field = found[1]
+            if found[i]:
+                pk_field = found[i]
             elif last.key_field:
                 pk_field = last.key_field
             elif not last.values.get(SELECT):
@@ -2154,8 +2157,8 @@ class CypherParser(Parser):
                 curr.table_name.lower()
             )
         else:
-            if found[0]:
-                foreign_fld = found[0]
+            if found[j]:
+                foreign_fld = found[j]
             elif not curr.values.get(SELECT):
                 raise IndexError(f'Foreign Key not found for {curr.table_name}.')
             else:
@@ -3177,7 +3180,10 @@ def mix(main_script: str, complement: str='', remove: bool=False) -> Select:
     is_join: bool = False
     if not complement:
         try:
-            extract_comments()
+            if parser == CypherParser:
+                q1 = join_queries([q1] + others)
+            elif parser == SQLParser:
+                extract_comments()
             return q1
         except:
             return None
@@ -3243,7 +3249,11 @@ def execute(params: list, program: str='python -m sql_blocks') -> Select:
         print('-'*50)
         print('Syntax: {} [<file1>|?] [<file2>|<option>]\nOptions: {}\n\n{}\n'.format(
             program, ''.join( f'\n\t{op}{descr}' for op, (descr, _, _) in OPTIONS.items() ),
-            'Note:  ? <file>   Applies pivot based on field comments.'
+            '''Note:  ? <file>   Applies pivot based on field comments.
+
+                (*) If "create_table.sql" is found, the schema
+                    will be used to complete a cypher script.
+            '''
         ))
         return
     scripts = []
@@ -3254,7 +3264,15 @@ def execute(params: list, program: str='python -m sql_blocks') -> Select:
     # -------------------------------------------
     def file_named_remove() -> bool:
         return re.search( r"^[.\\\/]*[\rRr]EMOVE", fname, re.IGNORECASE )
+    def load_schema() -> Schema:
+        CREATE_TABLE_FILE = 'create_table.sql'
+        result = None
+        if os.path.isfile(CREATE_TABLE_FILE):
+            with open(CREATE_TABLE_FILE, 'r') as f:
+                result = Schema( f.read() )
+        return result
     # -------------------------------------------
+    CypherParser.public_schema = load_schema()
     for i, param in enumerate(params[1:]):
         if i == 0:
             if param == '?':
@@ -3356,38 +3374,38 @@ class Schema:
 # ===========================================================================================//
 
 
-if __name__ == "__main__":
-    schema = Schema("""
-        create table Customer(
-           id int primary key, primary key
-           driver_licence char(13), 
-           name varchar(255),
-           region int /*     1=North
-                            2=South
-                            3=East
-                            4=West
-           ****************************************************/
-        );
-        create table Product(
-           serial_number int primary key,
-           name varchar(255) unique,
-           price float not null
-        );
-        create table Sales(
-           pro_id int references Product(), -- serial number
-           cus_id char(13) references Customer(driver_licence)
-           quantity float default 1,
-           ref_date date,
-           order_num int primary key
-        )
-    """)
-    SQLObject.ALIAS_FUNC = lambda t: t[0].lower()
-    c, s, p = CypherParser('c(na,re) <- s() -> p(na,pri)', Select, schema).queries
-    for query in (c, s, p):
-        print(query)
-        print('---------------------------------------------')
-    # --------------------- Should returns: -------------------------------------------------------
-    #   Customer(name, region, driver_licence) <- Sales(cus_id, pro_id) -> Product(id, name, price)
-    # ---------------------------------------------------------------------------------------------//
-    query = c + s + p
-    print(query)
+# if __name__ == "__main__":
+#     schema = Schema("""
+#         create table Customer(
+#            id int primary key, primary key
+#            driver_licence char(13), 
+#            name varchar(255),
+#            region int /*     1=North
+#                             2=South
+#                             3=East
+#                             4=West
+#            ****************************************************/
+#         );
+#         create table Product(
+#            serial_number int primary key,
+#            name varchar(255) unique,
+#            price float not null
+#         );
+#         create table Sales(
+#            pro_id int references Product(), -- serial number
+#            cus_id char(13) references Customer(driver_licence)
+#            quantity float default 1,
+#            ref_date date,
+#            order_num int primary key
+#         )
+#     """)
+#     SQLObject.ALIAS_FUNC = lambda t: t[0].lower()
+#     c, s, p = CypherParser('c(na,re) <- s() -> p(na,pri)', Select, schema).queries
+#     for query in (c, s, p):
+#         print(query)
+#         print('---------------------------------------------')
+#     # --------------------- Should returns: -------------------------------------------------------
+#     #   Customer(name, region, driver_licence) <- Sales(cus_id, pro_id) -> Product(id, name, price)
+#     # ---------------------------------------------------------------------------------------------//
+#     query = c + s + p
+#     print(query)
