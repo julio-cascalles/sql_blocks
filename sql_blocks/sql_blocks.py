@@ -2395,7 +2395,7 @@ class LanguageEnum(Enum):
     def by_name(cls, search: str) -> 'LanguageEnum':
         search = search.lower()
         for class_type in cls:
-            name = class_type.__name__
+            name = class_type.name
             if name.lower() == search:
                 return class_type
         return cls.SQL
@@ -3416,4 +3416,4 @@ if __name__ == "__main__":
                 getDate() - due_date as elapsed_time
     FROM Orders WHERE customer_id = 35
     """)
-    print( query.translate_to(OracleLanguage) )
+    print( query.translate_to('oracle') )
