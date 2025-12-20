@@ -2380,12 +2380,25 @@ class LanguageEnum(Enum):
     Databricks = DatabricksLanguage
     Spark = SparkLanguage
     Neo4J = Neo4JLanguage
+    Oracle = OracleLanguage
+    SqlServer = SqlServerLanguage
+    Postgre = PostgreLanguage
+    MySql = MySqlLanguage
 
     @classmethod
     def help(cls):
         print('Avaiable scripting languages:\n{}'.format(
             '\n'.join(f'\t{lang_enum.name}' for lang_enum in cls)
         ))
+
+    @classmethod
+    def by_name(cls, search: str) -> 'LanguageEnum':
+        search = search.lower()
+        for class_type in cls:
+            name = class_type.__name__
+            if name.lower() == search:
+                return class_type
+        return cls.SQL
 
 
 class Select(SQLObject):
@@ -2553,7 +2566,7 @@ class Select(SQLObject):
     def translate_to(self, language: QueryLanguage|str|LanguageEnum) -> str:
         if isinstance(language, str):
             try:
-                language = LanguageEnum[language]
+                language = LanguageEnum.by_name(language)
             except:
                 print(f'Unknown "{language}" language.')
                 return
