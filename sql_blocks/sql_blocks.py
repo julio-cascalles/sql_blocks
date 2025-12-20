@@ -109,10 +109,35 @@ class SQLObject:
         return re.search(r'\bCASE\b', text, re.IGNORECASE)
 
     @classmethod
+    def split_functions(cls, text: str) -> list:
+        result = []
+        level = 0
+        start = 0
+        ignore = False
+        for found in re.finditer(r'([(,)\'"])', text):
+            char = found.group()
+            if char in ["'", '"']:
+                ignore = not ignore
+            if ignore:
+                continue
+            if char == '(':
+                level += 1
+            elif char == ')':
+                level -= 1
+            elif char == ',' and level == 0:
+                end = found.end()
+                result.append(text[start:end-1])
+                start = end+1
+        return result + [ text[start:] ]
+
+    @classmethod
     def split_fields(cls, text: str, key: str) -> list:
-        if key == SELECT and cls.contains_CASE_statement(text):
-            return Case.parse(text)
         text = re.sub(r'\s+', ' ', text)
+        if key == SELECT:
+            if cls.contains_CASE_statement(text):
+                return Case.parse(text)
+            if '(' in text:
+                return cls.split_functions(text)        
         separator = cls.get_separator(key)
         return re.split(separator, text)
 
@@ -270,41 +295,39 @@ class Dialect(Enum):
     POSTGRESQL  = "PostgreSql"
     MYSQL       = "mySql"
 
-    @classmethod
-    def help(cls) -> str:
-        print( "Dialects:\n{}".format(
-            '\n'.join( f'\t{dialect.value}' for dialect in cls if dialect.value )
-        ) )
-    
-    @classmethod
-    def by_name(cls, name: str) -> 'Dialect':
-        for dialect in cls:
-            if name and name.lower() == dialect.value.lower():
-                return dialect
-        return cls.ANSI
 
 
 SQL_TYPES = 'CHAR INT DATE FLOAT ANY'.split()
 CHAR, INT, DATE, FLOAT, ANY  =  SQL_TYPES
 
 
-class DialectInfo:
-    def __init__(self, txt: str, dialect: Dialect=None):
-        self.txt = txt
-        self.func_types = {
-            func_name: class_type 
-            for func_name in re.findall(r"(\w+)[(]", txt)
-            for class_type in Function.descendants()
-            if class_type.match(func_name, dialect)
-        }
+class DialectLanguage:
+    dialect: Dialect = Dialect.ANSI
 
-    def set_dialect(self, new_dialect: Dialect|str):
-        if isinstance(new_dialect, str):
-            new_dialect = Dialect.by_name(new_dialect)
-        Function.dialect = new_dialect
-        for func_name, class_type in self.func_types.items():
-            self.txt = self.txt.replace( f"{func_name}(", class_type.name()+'(' )
-        return self
+    def __init__(self, target: 'Select'):
+        self.target = target
+
+    def convert(self) -> str:
+        Function.dialect = self.dialect
+        script = str(self.target)
+        for func_name in re.findall(r"(\w+)[(]", script):
+            for class_type in Function.descendants():
+                if class_type.match(func_name):
+                    script = script.replace( f"{func_name}(", class_type.name()+'(' )
+                    break
+        return script
+
+class OracleLanguage(DialectLanguage):
+    dialect = Dialect.ORACLE
+
+class PostgreLanguage(DialectLanguage):
+    dialect = Dialect.POSTGRESQL
+
+class SqlServerLanguage(DialectLanguage):
+    dialect = Dialect.SQL_SERVER
+
+class MySqlLanguage(DialectLanguage):
+    dialect = Dialect.MYSQL
 
 
 class Function(Code):
@@ -1912,7 +1935,8 @@ class SQLParser(Parser):
 
     def eval(self, txt: str):
         result, subqueries = {}, {}
-        txt = re.sub(r'[\[\]]', '', txt.replace('"', "'"))
+        # txt = re.sub(r'[\[\]]', '', txt.replace('"', "'"))
+        txt = txt.replace('"', "'")
         txt = re.sub(r"\/\*.*\*\/", '', txt) # remove comments /* */
         txt = re.sub(r'[-][-].*\n', '', txt) # remove comments --
         # -----------------------------------------------------------------------
@@ -3244,11 +3268,6 @@ def execute(params: list, program: str='python -m sql_blocks') -> Select:
             LanguageEnum,
             lambda txt, args: detect(txt).translate_to(args[0])
         ),
-        '--dialect': (
-            "   Convert function names from one database type to another.",
-            Dialect,
-            lambda txt, args: DialectInfo(txt).set_dialect(args[0]).txt
-        ),
     }
     if len(params) != 3:
         print('-'*50)
@@ -3379,29 +3398,9 @@ class Schema:
 
 
 if __name__ == "__main__":
-    CypherParser.public_schema = Schema('''
-        create table Customer(
-            id int primary key,
-            driver_licence char(13), 
-            name varchar(255),
-            region int /*     1=North
-                            2=South
-                            3=East
-                            4=West
-            ****************************************************/
-        );
-        create table Product(
-            serial_number int primary key,
-            name varchar(255) unique,
-            price float not null
-        );
-        create table Sales(
-            pro_id int references Product, -- serial number
-            cus_id char(13) references Customer(driver_licence)
-            quantity float default 1,
-            ref_date date,
-            order_num int primary key
-        )
-    ''')
-    query = join_queries( CypherParser('p(sum$)', Select).queries )
-    print(query)
+    query = detect("""
+    SELECT    Substring(EAN, '[)]'), Date_Part(ref_date, YEAR) as ref_year,
+                getDate() - due_date as elapsed_time
+    FROM Orders WHERE customer_id = 35
+    """)
+    print( query.translate_to(OracleLanguage) )
