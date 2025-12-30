@@ -57,7 +57,7 @@ def compare_individual_fields() -> bool:
     return query.values == many_fields_and_groups()
 
 def added_object_changes() -> set:
-    SQLObject.ALIAS_FUNC = lambda t: t[0]
+    DQL_Object.ALIAS_FUNC = lambda t: t[0]
     _class = Select(
         'class',
         student_id=ForeignKey('student'),
@@ -67,7 +67,7 @@ def added_object_changes() -> set:
     teacher = Select(teacher=Table('teacher_name, course'), id=PrimaryKey)
     s1 = set( (student + (_class + teacher)).values[FROM] )
     s2 = set( _class.values[FROM] )
-    SQLObject.ALIAS_FUNC = None
+    DQL_Object.ALIAS_FUNC = None
     return s1.intersection(s2)
 
 def query_for_cypher() -> Select:
@@ -229,7 +229,7 @@ def compare_join_condition(obj: Select) -> bool:
     return SequenceMatcher(None, txt1, txt2).ratio() > 0.66
 
 def tables_without_JOIN() -> Select:
-    SQLObject.ALIAS_FUNC = lambda t: t.lower()
+    DQL_Object.ALIAS_FUNC = lambda t: t.lower()
     singer = Select(
         " 'sql_blocks/music/data/Singer.csv' ", name=NamedField('artist_name'),
         id=PrimaryKey

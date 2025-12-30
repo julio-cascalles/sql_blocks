@@ -45,6 +45,9 @@ from tests.cte import(
 from tests.mix import (
     p1_mix_p2, pivot_summary, remove_mix, compare_mix_join
 )
+from tests.DML import (
+    compare_insert_from_dict, compare_insert_from_list, compare_insert_from_query
+)
 
 
 _best_movies = best_movies()
@@ -214,7 +217,8 @@ def test_dialects():
         "SQL_SERVER": "DateDiff(getDate(), due_date)",
         "ORACLE": "SYSDATE() - due_date",
         "POSTGRESQL": "Current_date() - due_date",
-        "MYSQL": "Current_Date() - due_date"
+        "MYSQL": "Current_Date() - due_date",
+        "BIGQUERY": "Current_Date() - due_date",
     }
     assert DateDiff_function_variants() == expected
 
@@ -305,3 +309,12 @@ def test_remove_mix():
 
 def test_compare_mix_join():
     assert compare_mix_join()
+
+def test_insert_from_dict():
+    assert compare_insert_from_dict()
+
+def test_insert_from_list():
+    assert compare_insert_from_list()
+
+def test_insert_from_query():
+    assert compare_insert_from_query()

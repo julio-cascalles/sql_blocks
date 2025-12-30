@@ -25,11 +25,11 @@ USUAL_KEYS = [SELECT, WHERE, GROUP_BY, ORDER_BY, LIMIT]
 TO_LIST = lambda x: x if isinstance(x, list) else [] if x is None else [x]
 
 
-class SQLObject:
+class DQL_Object:
     ALIAS_FUNC = None
     """    ^^^^^^^^^^^^^^^^^^^^^^^^
     You can change the behavior by assigning 
-    a user function to SQLObject.ALIAS_FUNC
+    a user function to DQL_Object.ALIAS_FUNC
     """
     USE_CATALOG: bool = False
 
@@ -213,7 +213,7 @@ class Field:
     prefix = ''
 
     @classmethod
-    def format(cls, name: str, main: SQLObject) -> str:
+    def format(cls, name: str, main: DQL_Object) -> str:
         def is_const() -> bool:
             return any([
                 re.findall('[.()0-9]', name),
@@ -230,7 +230,7 @@ class Field:
         return f'{cls.prefix}{name}'
 
     @classmethod
-    def add(cls, name: str, main: SQLObject):
+    def add(cls, name: str, main: DQL_Object):
         main.values.setdefault(SELECT, []).append(
             cls.format(name, main)
         )
@@ -245,7 +245,7 @@ class NamedField:
         self.alias = alias
         self.class_type = class_type
 
-    def add(self, name: str, main: SQLObject):
+    def add(self, name: str, main: DQL_Object):
         def is_literal() -> bool:
             if re.search(r'^[\'"].*', name):
                 return True
@@ -274,17 +274,17 @@ class Code:
             self.field_class = NamedField(field_alias)
         return self
     
-    def format(self, name: str, main: SQLObject) -> str:
+    def format(self, name: str, main: DQL_Object) -> str:
         return Field.format(name, main)
 
-    def __add(self, name: str, main: SQLObject):
+    def __add(self, name: str, main: DQL_Object):
         name = self.format(name, main)
         self.field_class.add(name, main)
         if self.extra:
             main.__call__(**self.extra)
 
     @classmethod
-    def add(cls, name: str, main: SQLObject):
+    def add(cls, name: str, main: DQL_Object):
         cls().__add(name, main)
 
 
@@ -294,6 +294,7 @@ class Dialect(Enum):
     ORACLE      = "Oracle"
     POSTGRESQL  = "PostgreSql"
     MYSQL       = "mySql"
+    BIGQUERY    = "BigQuery"
 
 
 
@@ -411,7 +412,7 @@ class Function(Code):
             params=cls.separator.join(str(p) for p in params)
         ) + f'  Return {cls.output}' + docstring
 
-    def set_main_param(self, name: str, main: SQLObject, root: 'Function'=None) -> bool:
+    def set_main_param(self, name: str, main: DQL_Object, root: 'Function'=None) -> bool:
         map = {
             Function: [],
             str: []
@@ -441,7 +442,7 @@ class Function(Code):
             self.params = new_params + self.params
         return True
 
-    def format(self, name: str, main: SQLObject) -> str:
+    def format(self, name: str, main: DQL_Object) -> str:
         if isinstance(self, Frame) and Partition.params:
             self.over(**Partition.params)
             Partition.params = None
@@ -572,12 +573,15 @@ class DatePart(Function):
     def alternative_names(cls) -> dict:
         return {
             Dialect.ORACLE: 'Extract',
-            Dialect.POSTGRESQL: "Date_Part"
+            Dialect.POSTGRESQL: "Date_Part",
+            Dialect.BIGQUERY: "Date_Trunc",
         }
 
     def get_pattern(self) -> str:
         interval = self.__class__.__name__
-        if self.dialect == Dialect.POSTGRESQL:
+        if self.dialect == Dialect.BIGQUERY:
+            self.params.insert( 0, f"'{interval}'".lower() )
+        elif self.dialect == Dialect.POSTGRESQL:
             self.params.insert(0, interval)
         elif self.dialect == Dialect.ORACLE and self.params:
             self.params[0] = f'{interval}  FROM {self.params[0]}'
@@ -726,6 +730,12 @@ class Cast(Function):
     output = ANY
     separator = ' As '
 
+    def get_pattern(self) -> str:
+        if self.dialect == Dialect.BIGQUERY:
+            data_type = self.params.pop(-1)
+            return data_type + '({params})'
+        return super().get_pattern()
+
 
 FUNCTION_CLASS = {f.__name__.lower(): f for f in Function.descendants()}
 
@@ -734,10 +744,10 @@ class ExpressionField:
     def __init__(self, expr: str):
         self.expr = expr
 
-    def add(self, name: str, main: SQLObject):
+    def add(self, name: str, main: DQL_Object):
         main.values.setdefault(SELECT, []).append(self.format(name, main))
 
-    def format(self, name: str, main: SQLObject) -> str:
+    def format(self, name: str, main: DQL_Object) -> str:
         """
         Replace special chars...
             {af}  or  {a.f} or % = alias and field
@@ -761,7 +771,7 @@ class FieldList:
         self.class_types = TO_LIST(class_types)
         self.ziped = ziped
 
-    def add(self, name: str, main: SQLObject):
+    def add(self, name: str, main: DQL_Object):
         if self.ziped:  # --- One class per field...
             for field, class_type in zip(self.fields, self.class_types):
                 class_type.add(field, main)
@@ -796,7 +806,7 @@ class Table(FieldList):
         DATE: DateField,
     }
 
-    def add(self, name: str, main: SQLObject):
+    def add(self, name: str, main: DQL_Object):
         if name:
             main.set_table(name)
         super().add(name, main)
@@ -824,7 +834,7 @@ class Table(FieldList):
 
 class PrimaryKey:
     @staticmethod
-    def add(name: str, main: SQLObject):
+    def add(name: str, main: DQL_Object):
         main.key_field = name
 
 
@@ -835,16 +845,16 @@ class ForeignKey:
         self.table_name = table_name
 
     @staticmethod
-    def get_key(obj1: SQLObject, obj2: SQLObject) -> tuple:
+    def get_key(obj1: DQL_Object, obj2: DQL_Object) -> tuple:
         # [To-Do] including alias will allow to relate the same table twice
         return obj1.table_name, obj2.table_name
 
-    def add(self, name: str, main: SQLObject):
+    def add(self, name: str, main: DQL_Object):
         key = self.get_key(main, self)
         ForeignKey.references[key] = (name, '')
 
     @classmethod
-    def find(cls, obj1: SQLObject, obj2: SQLObject) -> tuple:
+    def find(cls, obj1: DQL_Object, obj2: DQL_Object) -> tuple:
         key = cls.get_key(obj1, obj2)
         a, b = cls.references.get(key, ('', ''))
         return a, (b or obj2.key_field)
@@ -926,20 +936,20 @@ class Where:
         where.add = where.add_expression
         return where
 
-    def add_expression(self, name: str, main: SQLObject):
+    def add_expression(self, name: str, main: DQL_Object):
         self.content = self.content.format(name, main)
         main.values.setdefault(WHERE, []).append('{} {}'.format(
             self.prefix, self.content
         ))
 
     @classmethod
-    def join(cls, query: SQLObject, pairs: dict=None):
+    def join(cls, query: DQL_Object, pairs: dict=None):
         where = cls(query)
         where.pairs = pairs
         where.add = where.add_join
         return where
 
-    def add_join(self, name: str, main: SQLObject):
+    def add_join(self, name: str, main: DQL_Object):
         query = self.content
         main.values[FROM].append(f',{query.table_name} {query.alias}')
         for key in USUAL_KEYS:
@@ -957,15 +967,18 @@ class Where:
                 expr = f'({a2}.{f2} = {a1}.{f1})'
             main.values.setdefault(WHERE, []).append(expr)
 
-    def add(self, name: str, main: SQLObject):
+    def format(self, name: str) -> str:
+        return '{}{} {}'.format(
+            self.prefix, name, self.content
+        )
+
+    def add(self, name: str, main: DQL_Object):
         func_type = FUNCTION_CLASS.get(name.lower())
         if func_type:
             name = func_type.format('*', main)
         elif not main.has_named_field(name):
             name = Field.format(name, main)
-        main.values.setdefault(WHERE, []).append('{}{} {}'.format(
-            self.prefix, name, self.content
-        ))
+        main.values.setdefault(WHERE, []).append(self.format(name))
 
 
 eq, contains, gt, gte, lt, lte, is_null, inside = (
@@ -1013,7 +1026,7 @@ class Case:
         self.default = default
         return self
     
-    def format(self, name: str, main:SQLObject, field: str='') -> str:
+    def format(self, name: str, main:DQL_Object, field: str='') -> str:
         def put_alias(s: str) -> str:
             is_quoted = re.search(r'[\'"]', s)
             no_alias = (is_quoted or not main)
@@ -1037,7 +1050,7 @@ class Case:
     def __str__(self):
         return self.format('', None, self.field)
 
-    def add(self, name: str, main: SQLObject):
+    def add(self, name: str, main: DQL_Object):
         main.values.setdefault(SELECT, []).append(
             self.format(
                 name, main, Field.format(self.field, main)
@@ -1106,7 +1119,7 @@ class If(Code, Frame):
         self.default = default
         super().__init__()
 
-    def format(self, name: str, main: SQLObject) -> str:
+    def format(self, name: str, main: DQL_Object) -> str:
         quoted_result = Case.quoted_result
         Case.quoted_result = False
         _case = Case(self.field).when(self.condition).then(name).else_value(self.default)
@@ -1146,7 +1159,7 @@ class Options:
     def __init__(self, **values):
         self.__children: dict = values
 
-    def add(self, logical_separator: str, main: SQLObject):
+    def add(self, logical_separator: str, main: DQL_Object):
         if logical_separator.upper() not in ('AND', 'OR'):
             raise ValueError('`logical_separator` must be AND or OR')
         temp = Select(f'{main.table_name} {main.alias}')
@@ -1172,7 +1185,7 @@ class Between:
             self.start, self.end
         ))
 
-    def add(self, name: str, main:SQLObject):
+    def add(self, name: str, main:DQL_Object):
         if self.is_literal:
             return self.literal().add(name, main)
         Where.gte(self.start).add(name, main)
@@ -1204,7 +1217,7 @@ class Range(Case):
 
 class Clause:
     @classmethod
-    def format(cls, name: str, main: SQLObject) -> str:
+    def format(cls, name: str, main: DQL_Object) -> str:
         def is_function() -> bool:
             diff = main.diff(SELECT, [name.lower()], True)
             return diff.intersection(FUNCTION_CLASS)
@@ -1251,7 +1264,7 @@ class Rows:
 
 class DescOrderBy:
     @classmethod
-    def add(cls, name: str, main: SQLObject):
+    def add(cls, name: str, main: DQL_Object):
         name = Clause.format(name, main)
         main.values.setdefault(ORDER_BY, []).append(name + SortType.DESC.value)
 
@@ -1265,18 +1278,18 @@ class OrderBy(Clause):
     DESC = DescOrderBy
 
     @classmethod
-    def add(cls, name: str, main: SQLObject):
+    def add(cls, name: str, main: DQL_Object):
         name = cls.format(name, main)
         main.values.setdefault(ORDER_BY, []).append(name+cls.sort.value)
 
     @staticmethod
     def ascending(value: str) -> bool:
-        if re.findall(r'\s+(DESC)\s*$', value):
+        if re.findall(r'\bDESC\b\s*$', value):
             return False
         return True
 
     @classmethod
-    def format(cls, name: str, main: SQLObject) -> str:
+    def format(cls, name: str, main: DQL_Object) -> str:
         # if cls.ascending(name):
         #     cls.sort = SortType.ASC
         # else:
@@ -1300,7 +1313,7 @@ class Partition:
         Partition.content = content
 
     @classmethod
-    def add(cls, name: str, main: SQLObject):
+    def add(cls, name: str, main: DQL_Object):
         cls.params = {name: Partition}
         if cls.content:
             cls.content.add(name, main)
@@ -1314,7 +1327,7 @@ class GroupBy(Clause):
         # -----------------------------------------------------
         self.args = args
 
-    def __add(self, name: str, main: SQLObject):        
+    def __add(self, name: str, main: DQL_Object):        
         func: Function = None
         fields = []
         for alias, obj in self.args.items():
@@ -1338,7 +1351,7 @@ class GroupBy(Clause):
             main.values.setdefault(GROUP_BY, []).append(field)
 
     @classmethod
-    def add(cls, name: str, main: SQLObject):
+    def add(cls, name: str, main: DQL_Object):
         cls().__add(name, main)
 
 
@@ -1347,7 +1360,7 @@ class Having:
         self.function = function
         self.condition = condition
 
-    def add(self, name: str, main:SQLObject):
+    def add(self, name: str, main:DQL_Object):
         main.values[GROUP_BY][-1] += ' HAVING {} {}'.format(
             self.function().format(name, main), self.condition.content
         )
@@ -1598,7 +1611,7 @@ class Neo4JLanguage(QueryLanguage):
             if alias:
                 alias = alias[0]
             else:
-                alias = SQLObject.ALIAS_FUNC(table_name)
+                alias = DQL_Object.ALIAS_FUNC(table_name)
             condition = self.aliases.get(alias, '')
             if not condition:
                 self.aliases[alias] = ''
@@ -1727,7 +1740,7 @@ class PandasLanguage(DataAnalysisLanguage):
         self.names = {}
         for table in values:
             table, *join = [t.strip() for t in re.split('JOIN|LEFT|RIGHT|ON', table) if t.strip()]
-            alias, table = SQLObject.split_alias(table)
+            alias, table = DQL_Object.split_alias(table)
             result += "\ndf_{table} = {prefix}{func}('{table}.{ext}')".format(
                 prefix=self.PREFIX_LIBRARY, func=self.file_extension.value,
                 table=table, ext=self.file_extension.name.lower()
@@ -1738,7 +1751,7 @@ class PandasLanguage(DataAnalysisLanguage):
                     r.strip() for r in re.split('[().=]', join[-1]) if r
                 ], last_table)
             last_table = table
-        _, table = SQLObject.split_alias(values[0])
+        _, table = DQL_Object.split_alias(values[0])
         result += f'\ndf = df_{table}\n\ndf = df'
         return result
     
@@ -1770,8 +1783,8 @@ class PandasLanguage(DataAnalysisLanguage):
             )
         if not conditions:
             return ''
-        return '[\n{}\n]'.format(
-            '&'.join(f'\t{c}' for c in conditions),
+        return '[\n\t{}\n]'.format(
+            ' & '.join(c for c in conditions),
         )
     
     def clean_values(self, values: list) -> str:
@@ -1783,8 +1796,13 @@ class PandasLanguage(DataAnalysisLanguage):
     def sort_by(self, values: list) -> str:
         if not values:
             return ''
+        if len(values) == 1 and ' ' in values[0]:
+            values = values[0].split()
+        ascending = OrderBy.ascending(values[-1])
+        if not ascending:
+            values = values[:-1]
         return '.sort_values(\n{},\n\tascending = {}\n)'.format(
-            '\t'+self.clean_values(values), OrderBy.ascending(values[-1])
+            '\t'+self.clean_values(values), ascending
         )
 
     def set_group(self, values: list) -> str:
@@ -2016,8 +2034,8 @@ class SQLParser(Parser):
                     raise_table_not_found(a1)
                 if a2 not in result:
                     raise_table_not_found(a2)
-                obj1: SQLObject = result[a1]
-                obj2: SQLObject = result[a2]
+                obj1: DQL_Object = result[a1]
+                obj2: DQL_Object = result[a2]
                 PrimaryKey.add(f2, obj2)
                 ForeignKey(obj2.table_name).add(f1, obj1)
             else:
@@ -2401,7 +2419,7 @@ class LanguageEnum(Enum):
         return cls.SQL
 
 
-class Select(SQLObject):
+class Select(DQL_Object):
     join_type: JoinType = JoinType.INNER
     EQUIVALENT_NAMES = {}
     DefaultLanguage = QueryLanguage
@@ -2419,7 +2437,7 @@ class Select(SQLObject):
         result = self.table_name
         return self.EQUIVALENT_NAMES.get(result, result)
 
-    def add(self, name: str, main: SQLObject):
+    def add(self, name: str, main: DQL_Object):
         old_tables = main.values.get(FROM, [])
         if len(self.values[FROM]) > 1:
             old_tables += self.values[FROM][1:]
@@ -2436,14 +2454,14 @@ class Select(SQLObject):
         for key in USUAL_KEYS:
             main.update_values(key, self.values.get(key, []))
 
-    def copy(self) -> SQLObject:
+    def copy(self) -> DQL_Object:
         from copy import deepcopy
         return deepcopy(self)
 
-    def relation_error(self, other: SQLObject):
+    def relation_error(self, other: DQL_Object):
         raise ValueError(f'No relationship found between {self.table_name} and {other.table_name}.')
 
-    def __add__(self, other: SQLObject):
+    def __add__(self, other: DQL_Object):
         query = self.copy()
         if query.table_name.lower() == other.table_name.lower():
             for key in USUAL_KEYS:
@@ -2472,13 +2490,13 @@ class Select(SQLObject):
                 obj.add(name, self)
         return self
 
-    def __eq__(self, other: SQLObject) -> bool:
+    def __eq__(self, other: DQL_Object) -> bool:
         for key in KEYWORD:
             if self.diff(key, other.values.get(key, []), True):
                 return False
         return True
     
-    def __sub__(self, other: SQLObject) -> SQLObject:        
+    def __sub__(self, other: DQL_Object) -> DQL_Object:        
         if self.table_name.upper() == other.table_name.upper():
             query: Select = self.copy()
             REGEX_CONTENT = r'\w*[.]*\b(\w+)\b'
@@ -2505,7 +2523,7 @@ class Select(SQLObject):
         query.add(primary_k, other)
         return other
 
-    def __mul__(self,other: SQLObject) -> SQLObject:
+    def __mul__(self,other: DQL_Object) -> DQL_Object:
         query = self.copy()
         for key in USUAL_KEYS:
             if key == WHERE:
@@ -2517,6 +2535,8 @@ class Select(SQLObject):
         return query
 
     def limit(self, row_count: int=100, offset: int=0):
+        if Function.dialect == Dialect.BIGQUERY:
+            return 'TableSample System (1 percent)'
         if Function.dialect == Dialect.SQL_SERVER:
             fields = self.values.get(SELECT)
             if fields:
@@ -2543,7 +2563,7 @@ class Select(SQLObject):
         return re.findall(f'\b*{self.alias}[.]', field) != []
 
     @classmethod
-    def parse(cls, txt: str, parser: Parser = SQLParser) -> list[SQLObject]:
+    def parse(cls, txt: str, parser: Parser = SQLParser) -> list[DQL_Object]:
         return parser(txt, cls).queries
 
     def optimize(self, rules: list[Rule]=None):
@@ -2580,7 +2600,7 @@ class SubSelect(Select):
     condition_class = Where
     SUBQUERY_KEYWORD = 'IN'
 
-    def add(self, name: str, main: SQLObject):
+    def add(self, name: str, main: DQL_Object):
         self.break_lines = False
         self.condition_class.inside(
             self, self.SUBQUERY_KEYWORD
@@ -2665,8 +2685,8 @@ class Recursive(CTE):
 
     @classmethod
     def create(cls, name: str, pattern: str, formula: str, init_value, format: str=''):
-        SQLObject.ALIAS_FUNC = None
-        def get_field(obj: SQLObject, pos: int) -> str:
+        DQL_Object.ALIAS_FUNC = None
+        def get_field(obj: DQL_Object, pos: int) -> str:
             return obj.values[SELECT][pos].split('.')[-1]
         t1, t2 = detect(
             pattern*2, join_method=None, format=format
@@ -2750,7 +2770,7 @@ class CTENode:
                 sub: str
                 sub = re.findall(r'select\s+(.*)\s+from\b\s*[(]', txt[:x], re.IGNORECASE)[0]                
                 tables = [child.description for child in node.children]
-                _alias = [SQLObject.get_from_catalog(t) for t in tables]
+                _alias = [DQL_Object.get_from_catalog(t) for t in tables]
                 change =  lambda s, i: s.replace(f"{tables[i]}.", f"{_alias[i]}.")
                 fields = change(change(sub, 0), 1)
                 relats = re.findall(REGEX_JOIN, txt[x:], re.IGNORECASE)[0]
@@ -2904,7 +2924,7 @@ class CTEFactory:
             elif node.has_join():
                 query_list = [query]
                 self.main = generic_query(node)
-        SQLObject.catalog = {}
+        DQL_Object.catalog = {}
         self.cte_list.append( CTE(node.description, query_list) )
 
     def __str__(self):
@@ -3150,6 +3170,16 @@ def parser_class(text: str) -> Parser:
     return SQLParser if text.strip() else None
 
 def join_queries(query_list: list) -> Select:
+    def arrange():
+        if len(query_list) < 3:
+            return
+        q1: Select = query_list[0]
+        q2: Select = query_list[2]
+        key = ForeignKey.get_key(q1, q2)
+        if ForeignKey.references.get(key):
+            return
+        query_list.append( query_list.pop(0) ) # Moves from first to last position
+    arrange()
     result = query_list[0]
     for query in query_list[1:]:
         result += query
@@ -3196,7 +3226,7 @@ def mix(main_script: str, complement: str='', remove: bool=False) -> Select:
         return t1 == t2
     parser: Parser = parser_class(main_script)
     if parser == CypherParser and CypherParser.public_schema:
-        SQLObject.ALIAS_FUNC = None
+        DQL_Object.ALIAS_FUNC = None
     q1, *others = parser(main_script, Select).queries
     # ----------------------------------------------------
     def extract_comments() -> bool:
@@ -3294,8 +3324,8 @@ def execute(params: list, program: str='python -m sql_blocks') -> Select:
         ))
         return
     scripts = []
-    SQLObject.ALIAS_FUNC = lambda t: t[0].lower()
-    SQLObject.USE_CATALOG = True
+    DQL_Object.ALIAS_FUNC = lambda t: t[0].lower()
+    DQL_Object.USE_CATALOG = True
     is_help: bool = False
     fname: str = ''
     # -------------------------------------------
@@ -3335,8 +3365,7 @@ def execute(params: list, program: str='python -m sql_blocks') -> Select:
     return mix( *scripts, remove=file_named_remove() )
 
 
-class Schema:
-
+class DDL_Object:
     def __init__(self, txt: str):
         def char_type_regex(ftype: str) -> str:
             if ftype.endswith('CHAR'):
@@ -3392,6 +3421,8 @@ class Schema:
             summary[name] = table
         self.summary = summary
 
+
+class Schema(DDL_Object):
     def more_similar(self, search: str, table_name: str='') -> str:
         source = self.summary
         if table_name:
@@ -3405,15 +3436,102 @@ class Schema:
     def field_for_function(self, table_name: str, function: Function) -> str:
         table: Table = self.summary.get(table_name)
         return table.field_for_function(function) if table else ''
-
     
+    def find_table(self, field_list: list) -> str:
+        table: Table = None
+        s1 = set(field_list)
+        for name, table in self.summary.items():
+            s2 = set(table.fields)
+            if not (s1 - s2):
+                return name
+        return ''
+
+
+class DML_Object:
+    def __init__(self, values: list | Select | dict, table_name: str='', **conditions):
+        self.query: Select = None
+        condition: Where = None
+        self.filter = []
+        for name, condition in conditions.items():
+            self.filter.append( '\n\t' + condition.format(name) )
+        self.table = table_name
+        self.record_count = 1
+        self.values = self.get_values(values)
+        self.command = self.get_command()
+  
+    def __str__(self):
+        return self.command
+  
+    def get_values(self, values) -> list:
+        if not values:
+            return
+        schema: Schema = Parser.public_schema
+        if isinstance(values, list):
+            self.record_count = len(values)
+            entity: Table = None
+            if schema:
+                entity = schema.summary.get(self.table)
+            if not entity:
+                raise ValueError('The field definitions for this table are missing in Parser.public_schema.')
+            pk_field = entity.find_attribute(PrimaryKey)
+            self.fields = [field for field in entity.fields if field != pk_field]
+            result = values
+        else:
+            self.fields = values.keys()
+            if not self.table:
+                if not schema:
+                    raise ValueError('The table name could not be found.')
+                self.table = schema.find_table(self.fields)
+            result = values.values()
+        return [quoted(val) for val in result]
+
+
+class Insert(DML_Object):
+    def get_command(self):
+        return 'INSERT INTO {} ({}) {};'.format(
+            self.table,  ', '.join(self.fields),
+            f"\n{self.query}" if self.query else 'VALUES ' + self.values
+        )
+    
+    def get_values(self, values) -> list:
+        # ---------------------------------------------------------------------------
+        def values_to_str(source: list) -> str:
+            break_line: bool = (self.record_count > 1)
+            pattern = '\n\t{}' if break_line else '{}'
+            result = ', '.join( pattern.format(value) for value in source )
+            if not break_line:
+                result = f'\n\t({result})'
+            return result
+        # ---------------------------------------------------------------------------
+        if isinstance(values, Select):
+            self.query = values
+            if not self.table:
+                self.table = self.query.table_name            
+            self.fields = ( QueryLanguage.remove_alias(fld) for fld in self.query.values[SELECT] )
+            return ''
+        return values_to_str( super().get_values(values) )
+
+
+class Update(DML_Object):
+    def get_command(self):
+        fields = [f'\n\t{fld} = {val}' for fld, val in zip(self.fields, self.values)]
+        return 'UPDATE {} SET {} \nWHERE {};'.format(
+            self.table, ', '.join(fields), ' AND '.join(self.filter)
+        )
+    
+
+class Delete(DML_Object):
+    def __init__(self, table_name: str, **conditions):
+        super().__init__(values=None, table_name=table_name, **conditions)
+
+    def get_command(self):
+        return 'DELETE FROM {} WHERE {}\n;'.format(
+            self.table, ' AND '.join(self.filter)
+        )
 # ===========================================================================================//
 
 
 if __name__ == "__main__":
-    query = detect("""
-    SELECT    Substring(EAN, '[)]'), Date_Part(ref_date, YEAR) as ref_year,
-                getDate() - due_date as elapsed_time
-    FROM Orders WHERE customer_id = 35
-    """)
-    print( query.translate_to('oracle') )
+    print( Delete(table_name='Sales', ref_date=eq(Current_Date()), status=Not.eq(35)) )
+    print('#####################################################')
+    print( Update({'salary': 3650.14, 'department': 'IT'}, table_name='User', age=gt(27), promo=is_null()) )
