@@ -1829,6 +1829,147 @@ class PandasLanguage(DataAnalysisLanguage):
         return ''
 
 
+class PolarsLanguage(DataAnalysisLanguage):
+    pattern = '{_from}{where}{select}{group_by}{order_by}'
+    has_default = {key: False for key in KEYWORD}
+    file_extension = FileExtension.CSV
+    HEADER_IMPORT_LIB  = ['import polars as pl']
+    LIB_INITIALIZATION = ''
+    FIELD_LIST_FMT = '.select({}{})'
+    PREFIX_LIBRARY = 'pl.'
+    POLARS_FUNCTIONS = {'Avg': '.avg()', 'Count': '.count()', 'Sum': '.sum()', 'Year': '.dt.year()'}
+
+    def line_field_fmt(self, field: str, func: str='') -> str:
+        found = re.findall(r'(.*)\s+AS\s+(.*)', field, re.IGNORECASE)
+        if found:
+            field, alias = found[0]
+            field = field.strip()
+            alias = f".alias('{alias}')"
+        else:
+            alias = ''
+        if func:
+            func = self.POLARS_FUNCTIONS.get(func, func)            
+        return "{}pl.col('{}'){}{}".format(
+            self.TABULATION, field, func, alias
+        )
+
+    def add_field(self, values: list) -> str:
+        common_fields = self.split_agg_fields(values)
+        if common_fields:
+            return self.FIELD_LIST_FMT.format(
+                ','.join(self.line_field_fmt(fld) for fld in common_fields),
+                self.LINE_BREAK
+            )
+        return ''
+
+    def merge_tables(self, elements: list, main_table: str) -> str:
+        a1, f1, a2, f2 = elements
+        return ".join(\n\tdf_{}, left_on='{}', right_on='{}', how='{}'\n)\n".format(
+            self.names[a2], f1, f2, 'inner'
+        )
+
+    def get_tables(self, values: list) -> str:
+        result = '\n'.join(self.HEADER_IMPORT_LIB) + '\n'
+        if self.LIB_INITIALIZATION:
+            result += f'\n{self.LIB_INITIALIZATION}'
+        self.names = {}
+        suffix = ''
+        for table in values:
+            table, *join = [t.strip() for t in re.split('JOIN|LEFT|RIGHT|ON', table) if t.strip()]
+            alias, table = DQL_Object.split_alias(table)
+            result += "\ndf_{table} = {prefix}{func}('{table}.{ext}')".format(
+                prefix=self.PREFIX_LIBRARY, func=self.file_extension.value,
+                table=table, ext=self.file_extension.name.lower()
+            )
+            self.names[alias] = table
+            if join:
+                suffix += self.merge_tables([
+                    r.strip() for r in re.split('[().=]', join[-1]) if r
+                ], last_table)
+            last_table = table
+        _, table = DQL_Object.split_alias(values[0])
+        result += f'\ndf = df_{table}\n\ndf = df{suffix}'
+        return result
+    
+    def split_condition_elements(self, expr: str) -> list:
+        expr = self.remove_alias(expr)
+        return [t for t in re.split(r'(\w+)', expr) if t.strip()]
+
+    def extract_conditions(self, values: list) -> str:
+        conditions = []
+        STR_FUNC = {
+            1: '.str.startswith(',
+            2: '.str.endswith(',
+            3: '.str.contains(',
+        }
+        for expr in values:
+            func = ''
+            tokens = self.split_condition_elements(expr)
+            if '(' in tokens:
+                func, _, field, op, *const = tokens
+                func = self.POLARS_FUNCTIONS.get(func, func)
+                op = op.replace(')', '')
+            else:
+                field, op, *const = tokens
+            if op.count('=') == 1:
+                op = op.replace('=', '==')
+            if op.upper() == 'LIKE' and len(const) == 3:
+                level = 0
+                if '%' in const[0]:
+                    level += 2
+                if '%' in const[2]:
+                    level += 1
+                const = f"'{const[1]}')"
+                op = STR_FUNC[level]
+            else:
+                const = ''.join(const)
+            conditions.append(
+                f"(pl.col('{field}'){func}{op}{const})"
+            )
+        if not conditions:
+            return ''
+        return '.filter(\n\t{}\n)'.format(
+            ' & '.join(c for c in conditions),
+        )
+    
+    def clean_values(self, values: list) -> str:
+        for i in range(len(values)):
+            content = self.remove_alias(values[i])
+            values[i] = f"'{content}'"
+        return ','.join(values)
+
+    def sort_by(self, values: list) -> str:
+        if not values:
+            return ''
+        if len(values) == 1 and ' ' in values[0]:
+            values = values[0].split()
+        descending = not OrderBy.ascending(values[-1])
+        if descending:
+            values = values[:-1]
+        return '.sort(\n{},\n\tdescending = {}\n)'.format(
+            '\t'+self.clean_values(values), descending
+        )
+
+    def set_group(self, values: list) -> str:
+        result = '.group_by(\n\t{}\n)'.format(
+            self.clean_values(values)
+        )
+        if self.aggregation_fields:
+            result += '.agg('
+            for field in self.aggregation_fields:
+                func, *rest = re.split('[()]', field)
+                result += self.line_field_fmt(' '.join(rest), func)
+            result += '\n)'
+        return result
+    
+    def __init__(self, target: 'Select'):
+        super().__init__(target)
+        self.result['function'] = 'find'
+
+    def prefix(self, key: str):
+        return ''
+
+
 class SparkLanguage(PandasLanguage):
     HEADER_IMPORT_LIB = [
         'from pyspark.sql import SparkSession',
@@ -3452,8 +3593,10 @@ class DML_Object:
         self.query: Select = None
         condition: Where = None
         self.filter = []
+        self.where_fields = []
         for name, condition in conditions.items():
             self.filter.append( '\n\t' + condition.format(name) )
+            self.where_fields.append(name)
         self.table = table_name
         self.record_count = 1
         self.values = self.get_values(values)
@@ -3477,11 +3620,11 @@ class DML_Object:
             self.fields = [field for field in entity.fields if field != pk_field]
             result = values
         else:
-            self.fields = values.keys()
+            self.fields = list( values.keys() )
             if not self.table:
                 if not schema:
                     raise ValueError('The table name could not be found.')
-                self.table = schema.find_table(self.fields)
+                self.table = schema.find_table(self.fields + self.where_fields)
             result = values.values()
         return [quoted(val) for val in result]
 
@@ -3532,6 +3675,20 @@ class Delete(DML_Object):
 
 
 if __name__ == "__main__":
-    print( Delete(table_name='Sales', ref_date=eq(Current_Date()), status=Not.eq(35)) )
-    print('#####################################################')
-    print( Update({'salary': 3650.14, 'department': 'IT'}, table_name='User', age=gt(27), promo=is_null()) )
+    query = detect(
+        "SELECT"
+        # "       customer,"
+        "        c.name as customer_name,"
+        "        Sum(o.quantity) as total "
+        "FROM"
+        # "        Order "
+        "        Order o JOIN Customer c ON (o.customer_id = c.id) "
+        "WHERE"
+        "        status = 'pending' "
+        "        AND Year(ref_date) = 2024 "
+        "GROUP BY "
+        "        customer "
+        "ORDER BY "
+        "        total DESC"
+    )
+    print( query.translate_to(PolarsLanguage) )
