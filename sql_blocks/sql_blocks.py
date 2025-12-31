@@ -1862,10 +1862,10 @@ class PolarsLanguage(DataAnalysisLanguage):
             )
         return ''
 
-    def merge_tables(self, elements: list, main_table: str) -> str:
+    def merge_tables(self, elements: list, join_direction: str) -> str:
         a1, f1, a2, f2 = elements
-        return ".join(\n\tdf_{}, left_on='{}', right_on='{}', how='{}'\n)\n".format(
-            self.names[a2], f1, f2, 'inner'
+        return ".join(\n\tdf_{}, left_on='{}', right_on='{}', how='{}'\n)".format(
+            self.names[a2], f1, f2, join_direction or 'inner'
         )
 
     def get_tables(self, values: list) -> str:
@@ -1874,8 +1874,9 @@ class PolarsLanguage(DataAnalysisLanguage):
             result += f'\n{self.LIB_INITIALIZATION}'
         self.names = {}
         suffix = ''
+        REGEX_JOIN = re.compile('JOIN|LEFT|RIGHT|ON', re.IGNORECASE)
         for table in values:
-            table, *join = [t.strip() for t in re.split('JOIN|LEFT|RIGHT|ON', table) if t.strip()]
+            table, *join = [t.strip() for t in REGEX_JOIN.split(table) if t.strip()]
             alias, table = DQL_Object.split_alias(table)
             result += "\ndf_{table} = {prefix}{func}('{table}.{ext}')".format(
                 prefix=self.PREFIX_LIBRARY, func=self.file_extension.value,
@@ -1883,9 +1884,9 @@ class PolarsLanguage(DataAnalysisLanguage):
             )
             self.names[alias] = table
             if join:
-                suffix += self.merge_tables([
+                suffix += self.merge_tables( [
                     r.strip() for r in re.split('[().=]', join[-1]) if r
-                ], last_table)
+                ], self.target.join_type.value.strip().lower() )
             last_table = table
         _, table = DQL_Object.split_alias(values[0])
         result += f'\ndf = df_{table}\n\ndf = df{suffix}'
@@ -2175,8 +2176,11 @@ class SQLParser(Parser):
                     raise_table_not_found(a1)
                 if a2 not in result:
                     raise_table_not_found(a2)
-                obj1: DQL_Object = result[a1]
-                obj2: DQL_Object = result[a2]
+                obj1: Select = result[a1]
+                obj2: Select = result[a2]
+                join_direction =  self.REGEX['tbl_join'].findall(values[FROM])[0].upper()
+                if join_direction in ('LEFT', 'RIGHT'):
+                    obj1.join_type = JoinType[join_direction]
                 PrimaryKey.add(f2, obj2)
                 ForeignKey(obj2.table_name).add(f1, obj1)
             else:
@@ -2536,6 +2540,7 @@ class LanguageEnum(Enum):
     SQL = QueryLanguage
     MongoDB = MongoDBLanguage
     Pandas = PandasLanguage
+    Polar = PolarsLanguage
     Databricks = DatabricksLanguage
     Spark = SparkLanguage
     Neo4J = Neo4JLanguage
@@ -3675,20 +3680,19 @@ class Delete(DML_Object):
 
 
 if __name__ == "__main__":
-    query = detect(
-        "SELECT"
-        # "       customer,"
-        "        c.name as customer_name,"
-        "        Sum(o.quantity) as total "
-        "FROM"
-        # "        Order "
-        "        Order o JOIN Customer c ON (o.customer_id = c.id) "
-        "WHERE"
-        "        status = 'pending' "
-        "        AND Year(ref_date) = 2024 "
-        "GROUP BY "
-        "        customer "
-        "ORDER BY "
-        "        total DESC"
-    )
+    query = detect("""
+        SELECT
+                c.name as customer_name,
+                Sum(o.quantity) as total 
+        FROM
+                Sales o  LEFT  JOIN Customer c ON (o.customer_id = c.id) 
+        WHERE
+                o.status = 'pending' 
+                AND Year(o.ref_date) = 2024 
+        GROUP BY 
+                c.customer_name
+        ORDER BY 
+                o.total DESC
+    """)
+    PolarsLanguage.file_extension = FileExtension.XLSX
     print( query.translate_to(PolarsLanguage) )
