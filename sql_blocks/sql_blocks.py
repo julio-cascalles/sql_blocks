@@ -3353,13 +3353,12 @@ def parser_class(text: str) -> Parser:
         (r'select.*from', SQLParser),
         (r'[.](find|aggregate)[(]', MongoParser),
         (r'\bmatch\b\s*[(]', Neo4JParser),
-        (r'\w+[(].*[)]\s*[<->]', CypherParser),
     ]
     text = Parser.remove_spaces(text)
     for regex, class_type in PARSER_REGEX:
         if re.findall(regex, text, re.IGNORECASE):
             return class_type
-    return SQLParser if text.strip() else None
+    return CypherParser if text.strip() else None
 
 def join_queries(query_list: list) -> Select:
     def arrange():
