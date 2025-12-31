@@ -2234,7 +2234,7 @@ class CypherParser(Parser):
             return
         if self.schema:
             alias = token
-            token = self.schema.more_similar(token)
+            token = self.schema.most_similar(token)
         table_name = f'{token} {alias}' if alias else token
         query = self.class_type(table_name)
         if not alias:
@@ -2254,7 +2254,9 @@ class CypherParser(Parser):
             query = self.aliases[alias]
         else:
             field, *condition = self.REGEX['condition'].split(token)
-            query = self.queries[-1]
+            query: Select = self.queries[-1]
+            if self.schema:
+                field = self.schema.most_similar(field, query.table_name)            
         Where(' '.join(condition)).add(field, query)
     
     def add_order(self, token: str):
@@ -2303,7 +2305,7 @@ class CypherParser(Parser):
             else:
                 class_list = [Field] + extra_classes
             if self.schema and self.queries:
-                field = self.schema.more_similar(field, query.table_name)
+                field = self.schema.most_similar(field, query.table_name)
             FieldList(field, class_list).add('', query)
         # -------------------------------------------------------
         run( **field_params() )
@@ -3574,7 +3576,7 @@ class DDL_Object:
 
 
 class Schema(DDL_Object):
-    def more_similar(self, search: str, table_name: str='') -> str:
+    def most_similar(self, search: str, table_name: str='') -> str:
         source = self.summary
         if table_name:
             table: Table = source[table_name]
@@ -3685,19 +3687,45 @@ class Delete(DML_Object):
 
 
 if __name__ == "__main__":
-    query = detect("""
-        SELECT
-                c.name as customer_name,
-                Sum(o.quantity) as total 
-        FROM
-                Sales o  LEFT  JOIN Customer c ON (o.customer_id = c.id) 
-        WHERE
-                o.status = 'pending' 
-                AND Year(o.ref_date) = 2024 
-        GROUP BY 
-                c.customer_name
-        ORDER BY 
-                o.total DESC
-    """)
-    PolarsLanguage.file_extension = FileExtension.XLSX
-    print( query.translate_to(PolarsLanguage) )
+    # query = detect("""
+    #     SELECT
+    #             c.name as customer_name,
+    #             Sum(o.quantity) as total 
+    #     FROM
+    #             Sales o  LEFT  JOIN Customer c ON (o.customer_id = c.id) 
+    #     WHERE
+    #             o.status = 'pending' 
+    #             AND Year(o.ref_date) = 2024 
+    #     GROUP BY 
+    #             c.customer_name
+    #     ORDER BY 
+    #             o.total DESC
+    # """)
+    # PolarsLanguage.file_extension = FileExtension.XLSX
+    # print( query.translate_to(PolarsLanguage) )
+    Parser.public_schema = Schema('''
+        create table Customer(
+            id int primary key,
+            driver_licence char(13), 
+            name varchar(255),
+            region int /*     1=North
+                            2=South
+                            3=East
+                            4=West
+            ****************************************************/
+        );
+        create table Product(
+            serial_number int primary key,
+            name varchar(255) unique,
+            price float not null
+        );
+        create table Sales(
+            pro_id int references Product, -- serial number
+            cus_id char(13) references Customer(driver_licence)
+            quantity float default 1,
+            ref_date date,
+            order_num int primary key
+        )
+    ''')
+    query = detect('c(na, ^dr ?r = 3) <- s(ref)')
+    print(query)
