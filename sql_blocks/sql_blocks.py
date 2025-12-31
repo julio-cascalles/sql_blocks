@@ -330,6 +330,9 @@ class SqlServerLanguage(DialectLanguage):
 class MySqlLanguage(DialectLanguage):
     dialect = Dialect.MYSQL
 
+class BigQueryLanguage(DialectLanguage):
+    dialect = Dialect.BIGQUERY
+
 
 class Function(Code):
     dialect = Dialect.ANSI
@@ -496,13 +499,14 @@ class Re(Function):
     @classmethod
     def alternative_names(cls) -> dict:
         return {
-            Dialect.POSTGRESQL: 'Substring'
+            Dialect.POSTGRESQL: 'Substring',
+            Dialect.BIGQUERY: 'Regex_Extract',
         }
     
     @classmethod
     def name(cls) -> str:
         if cls.dialect != Dialect.POSTGRESQL:
-            return 'Regexp_Substr'
+            return 'Regexp_Substr' # When the class name is no the same as the SQL function.
         return super().name()
  
     @classmethod
@@ -2545,9 +2549,10 @@ class LanguageEnum(Enum):
     Spark = SparkLanguage
     Neo4J = Neo4JLanguage
     Oracle = OracleLanguage
-    SqlServer = SqlServerLanguage
+    MSSqlServer = SqlServerLanguage
     Postgre = PostgreLanguage
     MySql = MySqlLanguage
+    BigQuery = BigQueryLanguage
 
     @classmethod
     def help(cls):
@@ -2560,7 +2565,7 @@ class LanguageEnum(Enum):
         search = search.lower()
         for class_type in cls:
             name = class_type.name
-            if name.lower() == search:
+            if name.lower().startswith(search):
                 return class_type
         return cls.SQL
 
