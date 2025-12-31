@@ -224,6 +224,9 @@ class Field:
         if name in ('_', '*'):
             name = '*'
         elif not is_const() and not main.has_named_field(name):
+            schema: Schema = Parser.public_schema
+            if schema:
+                name = schema.most_similar(name, main.table_name)
             name = f'{main.alias}.{name}'
         if Function in cls.__bases__:
             name = f'{cls.__name__}({name})'
@@ -887,6 +890,7 @@ class Where:
 
     def __init__(self, content: str):
         self.content = content
+        self.owner = None
 
     @classmethod
     def __constructor(cls, operator: str, value):
@@ -971,10 +975,24 @@ class Where:
                 expr = f'({a2}.{f2} = {a1}.{f1})'
             main.values.setdefault(WHERE, []).append(expr)
 
-    def format(self, name: str) -> str:
+    @classmethod
+    def format(cls, name: str, main) -> str:
+        content = ''
+        if isinstance(main, Where):
+            content = main.content
+            main = main.owner
+        # -----------------------------
+        schema: Schema = Parser.public_schema
+        if schema:
+            field, *rest = re.split(r'([<=>])', name)
+            field = re.findall(r'\w+$', field.strip())[0]
+            name = name.replace(
+                field, schema.most_similar(field, main.table_name)
+            )
         return '{}{} {}'.format(
-            self.prefix, name, self.content
+            cls.prefix, name, content
         )
+        # -----------------------------
 
     def add(self, name: str, main: DQL_Object):
         func_type = FUNCTION_CLASS.get(name.lower())
@@ -982,7 +1000,9 @@ class Where:
             name = func_type.format('*', main)
         elif not main.has_named_field(name):
             name = Field.format(name, main)
-        main.values.setdefault(WHERE, []).append(self.format(name))
+        self.owner = main
+        cls = self.__class__
+        main.values.setdefault(WHERE, []).append(cls.format(name, self))
 
 
 eq, contains, gt, gte, lt, lte, is_null, inside = (
@@ -1225,6 +1245,9 @@ class Clause:
         def is_function() -> bool:
             diff = main.diff(SELECT, [name.lower()], True)
             return diff.intersection(FUNCTION_CLASS)
+        schema: Schema = Parser.public_schema
+        if schema:
+            name = schema.most_similar(name, main.table_name)
         found = re.findall(r'^_\d', name)
         if found:
             name = found[0].replace('_', '')
@@ -2049,11 +2072,10 @@ class Parser:
     def prepare(self):
         ...
 
-    def __init__(self, txt: str, class_type: type, schema: 'Schema'=None):
+    def __init__(self, txt: str, class_type: type):
         self.queries = []
         self.prepare()
         self.class_type = class_type
-        self.schema = schema or self.public_schema
         self.eval(txt)
 
     def eval(self, txt: str):
@@ -2173,9 +2195,9 @@ class SQLParser(Parser):
         tokens = [t.strip() for t in self.REGEX['keywords'].split(txt) if t.strip()]
         values = {k.upper(): v for k, v in zip(tokens[::2], tokens[1::2])}
         tables = [t.strip() for t in self.REGEX['tbl_join'].split(values[FROM]) if t.strip()]
-        for item in tables:
-            if '=' in item:
-                a1, f1, a2, f2 = [r.strip() for r in re.split('[().=]', item) if r]
+        for curr_table_name in tables:
+            if '=' in curr_table_name:
+                a1, f1, a2, f2 = [r.strip() for r in re.split('[().=]', curr_table_name) if r]
                 if a1 not in result:
                     raise_table_not_found(a1)
                 if a2 not in result:
@@ -2188,13 +2210,21 @@ class SQLParser(Parser):
                 PrimaryKey.add(f2, obj2)
                 ForeignKey(obj2.table_name).add(f1, obj1)
             else:
-                obj = self.class_type(item)
+                schema: Schema = self.public_schema
+                if schema:
+                    old_name = curr_table_name
+                    curr_table_name, *alias = curr_table_name.split()
+                    new_name = schema.most_similar(curr_table_name)
+                    curr_table_name = '{} {}'.format(
+                        new_name, alias[0] if alias else old_name
+                    )
+                obj = self.class_type(curr_table_name)
                 for key in USUAL_KEYS:
                     if not key in values:
                         continue
                     cls = {
                         ORDER_BY: OrderBy, GROUP_BY: GroupBy
-                    }.get(key, Field)
+                    }.get(key, Where if key == 'WHERE' else Field)
                     obj.values[key] = [
                         cls.format(fld, obj)
                         for fld in self.class_type.split_fields(values[key], key)
@@ -2232,9 +2262,10 @@ class CypherParser(Parser):
         token, *more = re.split(r"([|@])", token)
         if not token.isidentifier():
             return
-        if self.schema:
+        schema: Schema = self.public_schema
+        if schema:
             alias = token
-            token = self.schema.most_similar(token)
+            token = schema.most_similar(token)
         table_name = f'{token} {alias}' if alias else token
         query = self.class_type(table_name)
         if not alias:
@@ -2255,8 +2286,9 @@ class CypherParser(Parser):
         else:
             field, *condition = self.REGEX['condition'].split(token)
             query: Select = self.queries[-1]
-            if self.schema:
-                field = self.schema.most_similar(field, query.table_name)            
+            schema: Schema = self.public_schema
+            if schema:
+                field = schema.most_similar(field, query.table_name)            
         Where(' '.join(condition)).add(field, query)
     
     def add_order(self, token: str):
@@ -2285,6 +2317,7 @@ class CypherParser(Parser):
                 field, alias = alias, field
             extra_classes = class_types or []
             query: Select = self.queries[-1]
+            schema: Schema = self.public_schema
             if group:
                 if not field:
                     field = group
@@ -2298,14 +2331,14 @@ class CypherParser(Parser):
                 if not func_class:
                     raise ValueError(f'Unknown function `{function}`.')
                 class_list = [ func_class().As(alias, extra_classes) ]
-                if not field and self.schema:
-                    field = self.schema.field_for_function(query.table_name, func_class)
+                if not field and schema:
+                    field = schema.field_for_function(query.table_name, func_class)
             elif alias:
                 class_list = [NamedField(alias)] + extra_classes
             else:
                 class_list = [Field] + extra_classes
-            if self.schema and self.queries:
-                field = self.schema.most_similar(field, query.table_name)
+            if schema and self.queries:
+                field = schema.most_similar(field, query.table_name)
             FieldList(field, class_list).add('', query)
         # -------------------------------------------------------
         run( **field_params() )
@@ -3251,7 +3284,7 @@ class RuleLogicalOp(Rule):
             if not re.search(r'\b(NOT|not).*[<>=]', expr):
                 continue
             tokens = [t.strip() for t in re.split(r'NOT\b|not\b|(<|>|=)', expr) if t]
-            op = ''.join(tokens[1: len(tokens)-1])
+            op = ''.join(t for t in tokens if t in cls.REVERSE)
             tokens = [tokens[0], cls.REVERSE[op], tokens[-1]]
             target.values[WHERE][i] = ' '.join(tokens)
 
@@ -3577,10 +3610,11 @@ class DDL_Object:
 
 class Schema(DDL_Object):
     def most_similar(self, search: str, table_name: str='') -> str:
+        search = search.strip()
         source = self.summary
         if table_name:
-            table: Table = source[table_name]
-            source = table.fields
+            table_name = self.most_similar(table_name)
+            source = self.summary[table_name].fields
         for key in source:
             if key.upper().startswith(search.upper()):
                 return key
@@ -3687,22 +3721,7 @@ class Delete(DML_Object):
 
 
 if __name__ == "__main__":
-    # query = detect("""
-    #     SELECT
-    #             c.name as customer_name,
-    #             Sum(o.quantity) as total 
-    #     FROM
-    #             Sales o  LEFT  JOIN Customer c ON (o.customer_id = c.id) 
-    #     WHERE
-    #             o.status = 'pending' 
-    #             AND Year(o.ref_date) = 2024 
-    #     GROUP BY 
-    #             c.customer_name
-    #     ORDER BY 
-    #             o.total DESC
-    # """)
-    # PolarsLanguage.file_extension = FileExtension.XLSX
-    # print( query.translate_to(PolarsLanguage) )
+    ##@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@
     Parser.public_schema = Schema('''
         create table Customer(
             id int primary key,
@@ -3727,5 +3746,6 @@ if __name__ == "__main__":
             order_num int primary key
         )
     ''')
-    query = detect('c(na, ^dr ?r = 3) <- s(ref)')
-    print(query)
+    # query = detect("select na, dr from c where reg = 'NORTH' order by na")
+    query = CypherParser("c(^na, dr ?reg = 'NORTH')", Select).queries[0]
+    print(query) #.translate_to(PolarsLanguage))
