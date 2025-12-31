@@ -2083,11 +2083,17 @@ class Parser:
 
     @staticmethod
     def remove_spaces(script: str) -> str:
-        is_string = False
+        quoted_mark: str = ''
+        is_string: bool = False
         result = []
-        for token in re.split(r'(")', script):
-            if token == '"':
-                is_string = not is_string
+        for token in re.split(r'(["\'])', script):
+            if token in ('"', "'") :
+                if not quoted_mark:
+                    is_string = True
+                    quoted_mark = token
+                elif token == quoted_mark:
+                    is_string = False
+                    quoted_mark = ''
             if not is_string:
                 token = re.sub(r'\s+', '', token)
             result.append(token)
@@ -3347,7 +3353,7 @@ def parser_class(text: str) -> Parser:
         (r'select.*from', SQLParser),
         (r'[.](find|aggregate)[(]', MongoParser),
         (r'\bmatch\b\s*[(]', Neo4JParser),
-        (r'^\w+\S+[(]', CypherParser),
+        (r'\w+[(].*[)]\s*[<->]', CypherParser),
     ]
     text = Parser.remove_spaces(text)
     for regex, class_type in PARSER_REGEX:
@@ -3721,7 +3727,6 @@ class Delete(DML_Object):
 
 
 if __name__ == "__main__":
-    ##@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@
     Parser.public_schema = Schema('''
         create table Customer(
             id int primary key,
@@ -3746,6 +3751,7 @@ if __name__ == "__main__":
             order_num int primary key
         )
     ''')
-    # query = detect("select na, dr from c where reg = 'NORTH' order by na")
-    query = CypherParser("c(^na, dr ?reg = 'NORTH')", Select).queries[0]
-    print(query) #.translate_to(PolarsLanguage))
+    query = detect("c(?na='Julio Cascalles') <- sal(q, year$) -> prod(na, pri^)")
+    # query = detect("order by na select na, dr and reg = 'NORTH' from c")
+    # query = CypherParser("c(^na, dr ?reg = 'NORTH')", Select).queries[0]
+    print(query) 
