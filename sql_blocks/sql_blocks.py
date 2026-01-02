@@ -1704,6 +1704,15 @@ class DataAnalysisLanguage(QueryLanguage):
                 common_fields.append(field)
         return common_fields
 
+    def split_condition_elements(self, expr: str) -> list:
+        expr = self.remove_alias(expr)
+        tokens = Parser.strings_and_tokens(expr)
+        if tokens:
+            tokens = re.split(r'(\w+)', tokens.pop(0)) + tokens
+        return [ t for t in tokens if t and t.strip() ]
+
+
+
 class DatabricksLanguage(DataAnalysisLanguage):
     pattern = '{_from}{where}{group_by}{order_by}{select}{limit}'
     has_default = {key: bool(key == SELECT) for key in KEYWORD}
@@ -1782,10 +1791,6 @@ class PandasLanguage(DataAnalysisLanguage):
         result += f'\ndf = df_{table}\n\ndf = df'
         return result
     
-    def split_condition_elements(self, expr: str) -> list:
-        expr = self.remove_alias(expr)
-        return [t for t in re.split(r'(\w+)', expr) if t.strip()]
-
     def extract_conditions(self, values: list) -> str:
         conditions = []
         STR_FUNC = {
@@ -1919,10 +1924,6 @@ class PolarsLanguage(DataAnalysisLanguage):
         result += f'\ndf = df_{table}\n\ndf = df{suffix}'
         return result
     
-    def split_condition_elements(self, expr: str) -> list:
-        expr = self.remove_alias(expr)
-        return [t for t in re.split(r'(\w+)', expr) if t.strip()]
-
     def extract_conditions(self, values: list) -> str:
         conditions = []
         STR_FUNC = {
@@ -2082,7 +2083,7 @@ class Parser:
         ...
 
     @staticmethod
-    def remove_spaces(script: str) -> str:
+    def strings_and_tokens(script: str, function: callable=None) -> list:
         quoted_mark: str = ''
         is_string: bool = False
         result = []
@@ -2094,9 +2095,15 @@ class Parser:
                 elif token == quoted_mark:
                     is_string = False
                     quoted_mark = ''
-            if not is_string:
-                token = re.sub(r'\s+', '', token)
+            if not is_string and function:
+                token = function(token)
             result.append(token)
+        return result
+
+    @classmethod
+    def remove_spaces(cls, script: str) -> str:
+        func = lambda token: re.sub(r'\s+', '', token)
+        result = cls.strings_and_tokens(script, func)
         return ''.join(result)
 
     def get_tokens(self, txt: str) -> list:
@@ -3350,11 +3357,11 @@ class RuleReplaceJoinBySubselect(Rule):
 
 def parser_class(text: str) -> Parser:
     PARSER_REGEX = [
-        (r'select.*from', SQLParser),
+        (r'\bselect\b|\bfrom\b', SQLParser),
         (r'[.](find|aggregate)[(]', MongoParser),
         (r'\bmatch\b\s*[(]', Neo4JParser),
     ]
-    text = Parser.remove_spaces(text)
+    # text = Parser.remove_spaces(text)
     for regex, class_type in PARSER_REGEX:
         if re.findall(regex, text, re.IGNORECASE):
             return class_type
@@ -3723,34 +3730,3 @@ class Delete(DML_Object):
             self.table, ' AND '.join(self.filter)
         )
 # ===========================================================================================//
-
-
-if __name__ == "__main__":
-    Parser.public_schema = Schema('''
-        create table Customer(
-            id int primary key,
-            driver_licence char(13), 
-            name varchar(255),
-            region int /*     1=North
-                            2=South
-                            3=East
-                            4=West
-            ****************************************************/
-        );
-        create table Product(
-            serial_number int primary key,
-            name varchar(255) unique,
-            price float not null
-        );
-        create table Sales(
-            pro_id int references Product, -- serial number
-            cus_id char(13) references Customer(driver_licence)
-            quantity float default 1,
-            ref_date date,
-            order_num int primary key
-        )
-    ''')
-    query = detect("c(?na='Julio Cascalles') <- sal(q, year$) -> prod(na, pri^)")
-    # query = detect("order by na select na, dr and reg = 'NORTH' from c")
-    # query = CypherParser("c(^na, dr ?reg = 'NORTH')", Select).queries[0]
-    print(query) 
