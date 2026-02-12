@@ -1740,6 +1740,7 @@ class FileExtension(Enum):
     XLSX = 'read_excel'
     JSON = 'read_json'
     HTML = 'read_html'
+    DB   = 'scan_sqlite'
 
 class PandasLanguage(DataAnalysisLanguage):
     pattern = '{_from}{where}{select}{group_by}{order_by}'
