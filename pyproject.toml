@@ -1,6 +1,6 @@
 [project]
 name = "sql_blocks"
-version = "1.20260108"
+version = "1.20260212"
 authors = [
   { name="Julio Cascalles", email="julio.cascalles@outlook.com" },
 ]

@@ -41,14 +41,19 @@ class DQL_Object:
         self.key_field = ''
         self.set_table(table_name)
 
+    @staticmethod
+    def split_filename(file_name: str) -> list|tuple:
+        found = re.findall(r'(.*[/])(\w+)([.]\w+)', file_name)
+        if found:
+            found = found[0]
+        return found
+
     @classmethod
     def split_alias(cls, table_name: str) -> tuple:
-        is_file_name = any([
-            '/' in table_name, '.' in table_name
-        ])
-        ref = table_name
-        if is_file_name:
-            ref = table_name.split('/')[-1].split('.')[0]
+        try:
+            ref = cls.split_filename(table_name)[1]
+        except:
+            ref = table_name
         if cls.ALIAS_FUNC:
             return cls.ALIAS_FUNC(ref), table_name.split()[0]
         elif ' ' in table_name.strip():
@@ -1736,11 +1741,21 @@ class DatabricksLanguage(DataAnalysisLanguage):
 
 
 class FileExtension(Enum):
-    CSV = 'read_csv'
-    XLSX = 'read_excel'
-    JSON = 'read_json'
-    HTML = 'read_html'
-    DB   = 'scan_sqlite'
+    CSV = '.csv'
+    XLSX = '.xlsx'
+    JSON = '.json'
+    HTML = '.html'
+    DB   = '.db'
+
+    def function(self) -> str:
+        return {
+            FileExtension.CSV:  'read_csv',
+            FileExtension.XLSX: 'read_excel',
+            FileExtension.JSON: 'read_json',
+            FileExtension.HTML: 'read_html',
+            FileExtension.DB:   'scan_sqlite',
+        }[self]
+
 
 class PandasLanguage(DataAnalysisLanguage):
     pattern = '{_from}{where}{select}{group_by}{order_by}'
@@ -1775,12 +1790,18 @@ class PandasLanguage(DataAnalysisLanguage):
         if self.LIB_INITIALIZATION:
             result += f'\n{self.LIB_INITIALIZATION}'
         self.names = {}
+        main_table = ''
         for table in values:
+            folder, table, extension = DQL_Object.split_filename(table)
+            if extension:
+                self.file_extension = FileExtension( extension.lower() )
             table, *join = [t.strip() for t in re.split('JOIN|LEFT|RIGHT|ON', table) if t.strip()]
             alias, table = DQL_Object.split_alias(table)
-            result += "\ndf_{table} = {prefix}{func}('{table}.{ext}')".format(
-                prefix=self.PREFIX_LIBRARY, func=self.file_extension.value,
-                table=table, ext=self.file_extension.name.lower()
+            if not main_table:
+                main_table = table
+            result += "\ndf_{table} = {prefix}{func}('{folder}{table}{ext}')".format(
+                prefix=self.PREFIX_LIBRARY, func=self.file_extension.function(),
+                folder=folder, table=table, ext=extension or self.file_extension.value
             )
             self.names[alias] = table
             if join:
@@ -1788,8 +1809,7 @@ class PandasLanguage(DataAnalysisLanguage):
                     r.strip() for r in re.split('[().=]', join[-1]) if r
                 ], last_table)
             last_table = table
-        _, table = DQL_Object.split_alias(values[0])
-        result += f'\ndf = df_{table}\n\ndf = df'
+        result += f'\ndf = df_{main_table}\n\ndf = df'
         return result
     
     def extract_conditions(self, values: list) -> str:
@@ -3731,3 +3751,35 @@ class Delete(DML_Object):
             self.table, ' AND '.join(self.filter)
         )
 # ===========================================================================================//
+
+
+if __name__ == "__main__":
+    # Parser.public_schema = Schema("""
+    #     create table Customer(
+    #         id int primary key,
+    #         driver_licence char(13),
+    #         name varchar(255),
+    #         region in
+    #     );
+    #     create index ix_customer_name on Customer(name);
+    #     create table Product(
+    #         serial_number int primary key,
+    #         name varchar(255) unique,
+    #         price float not null
+    #     );
+    #     create table Sales(
+    #         pro_id int references Product, -- serial_number
+    #         cus_id char(13) references Customer(driver_licence),
+    #         quantity float default 1,
+    #         ref_date date,
+    #         order_num int primary key
+    #     );
+    # """)
+    # query = detect('c(na,re) <- s(q ^ref) -> p(na,pri)')
+    # print(query)
+    DATA_FILE = 'sample_data/Person.csv'
+    query = detect(f'SELECT name, age FROM {DATA_FILE} WHERE id = 24')
+    print('############################################')
+    print( query.translate_to(PandasLanguage) )
+    print('############################################')
+    
