@@ -43,7 +43,7 @@ class DQL_Object:
 
     @staticmethod
     def split_filename(file_name: str) -> list|tuple:
-        found = re.findall(r'(.*[/])(\w+)([.]\w+)', file_name)
+        found = re.findall(r'[\'"]*(.*[/])(\w+)([.]\w+)[\'"]*', file_name)
         if found:
             found = found[0]
         return found
@@ -1831,6 +1831,8 @@ class PandasLanguage(DataAnalysisLanguage):
                 op = STR_FUNC[level]
             else:
                 const = ''.join(const)
+            if op.strip() == '=':
+                op = ' == '
             conditions.append(
                 f"(df['{field}']{op}{const})"
             )
@@ -3777,7 +3779,7 @@ if __name__ == "__main__":
     # """)
     # query = detect('c(na,re) <- s(q ^ref) -> p(na,pri)')
     # print(query)
-    DATA_FILE = 'sample_data/Person.csv'
+    DATA_FILE = "'sample_data/Person.csv'"
     query = detect(f'SELECT name, age FROM {DATA_FILE} WHERE id = 24')
     print('############################################')
     print( query.translate_to(PandasLanguage) )
