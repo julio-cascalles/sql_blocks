@@ -46,6 +46,8 @@ class DQL_Object:
         found = re.findall(r'[\'"]*(.*[/])(\w+)([.]\w+)[\'"]*', file_name)
         if found:
             found = found[0]
+        else:
+            found = ['', file_name, '']
         return found
 
     @classmethod
@@ -1710,8 +1712,9 @@ class DataAnalysisLanguage(QueryLanguage):
         return common_fields
 
     def split_condition_elements(self, expr: str) -> list:
-        expr = self.remove_alias(expr)
-        tokens = Parser.strings_and_tokens(expr)
+        expr = self.remove_alias( re.sub('[()]', '', expr) )
+        func = lambda token: re.split(r'([%])', token)
+        tokens = Parser.strings_and_tokens(expr, {True: func})
         if tokens:
             tokens = re.split(r'(\w+)', tokens.pop(0)) + tokens
         return [ t for t in tokens if t and t.strip() ]
@@ -1812,7 +1815,11 @@ class PandasLanguage(DataAnalysisLanguage):
         result += f'\ndf = df_{main_table}\n\ndf = df'
         return result
     
-    def extract_conditions(self, values: list) -> str:
+    def extract_conditions(self, values: list, separator: str='&') -> str:
+        # --------------------------------------
+        def wildcard(arr: list) -> bool:
+            return any('%' in c for c in arr)
+        # --------------------------------------
         conditions = []
         STR_FUNC = {
             1: '.str.startswith(',
@@ -1820,26 +1827,34 @@ class PandasLanguage(DataAnalysisLanguage):
             3: '.str.contains(',
         }
         for expr in values:
+            found = re.findall(r'(.*)\s+OR\s+(.*)', expr, re.IGNORECASE)
+            if found:
+                conditions.append(
+                    self.extract_conditions(found[0], '|')
+                )
+                continue
             field, op, *const = self.split_condition_elements(expr)
-            if op.upper() == 'LIKE' and len(const) == 3:
+            if op.upper() == 'LIKE' and len(const) > 2:
                 level = 0
-                if '%' in const[0]:
+                if wildcard(const[:len(const)-2]):
                     level += 2
-                if '%' in const[2]:
+                if wildcard(const[2:]):
                     level += 1
-                const = f"'{const[1]}')"
+                value = ''.join(re.sub(r'["\'%]', '', s) for s in const)
+                const = f"'{value}')"
                 op = STR_FUNC[level]
             else:
+                if op.strip() == '=':
+                    op = ' == '
                 const = ''.join(const)
-            if op.strip() == '=':
-                op = ' == '
             conditions.append(
                 f"(df['{field}']{op}{const})"
             )
         if not conditions:
             return ''
-        return '[\n\t{}\n]'.format(
-            ' & '.join(c for c in conditions),
+        pattern = '\n\t{}\n\t' if separator == '|' else '[\n\t{}\n]'
+        return pattern.format(
+            f' {separator} '.join(c for c in conditions),
         )
     
     def clean_values(self, values: list) -> str:
@@ -2106,7 +2121,7 @@ class Parser:
         ...
 
     @staticmethod
-    def strings_and_tokens(script: str, function: callable=None) -> list:
+    def strings_and_tokens(script: str, functions : dict[bool, callable]={}) -> list:
         quoted_mark: str = ''
         is_string: bool = False
         result = []
@@ -2118,15 +2133,17 @@ class Parser:
                 elif token == quoted_mark:
                     is_string = False
                     quoted_mark = ''
-            if not is_string and function:
-                token = function(token)
-            result.append(token)
+            func = functions.get(is_string)
+            if func:
+                result += func(token)
+            else:
+                result.append(token)
         return result
 
     @classmethod
     def remove_spaces(cls, script: str) -> str:
-        func = lambda token: re.sub(r'\s+', '', token)
-        result = cls.strings_and_tokens(script, func)
+        func = lambda token: [re.sub(r'\s+', '', token)]
+        result = cls.strings_and_tokens(script, {False: func})
         return ''.join(result)
 
     def get_tokens(self, txt: str) -> list:
@@ -3780,7 +3797,27 @@ if __name__ == "__main__":
     # query = detect('c(na,re) <- s(q ^ref) -> p(na,pri)')
     # print(query)
     DATA_FILE = "'sample_data/Person.csv'"
-    query = detect(f'SELECT name, age FROM {DATA_FILE} WHERE id = 24')
+    query = detect(
+        """
+        SELECT
+            e.gender, d.region,
+            Avg(e.age)
+        FROM
+            Employees e
+            JOIN Departments d ON (e.dept_id = d.id)
+        WHERE
+            (
+                e.name LIKE 'Alice%' 
+                OR
+                e.name LIKE '%Smith'
+            ) 
+            AND d.sector = 656
+        GROUP BY
+            e.gender, d.region
+        ORDER BY
+            d.region DESC
+        """
+    )
     print('############################################')
     print( query.translate_to(PandasLanguage) )
     print('############################################')
