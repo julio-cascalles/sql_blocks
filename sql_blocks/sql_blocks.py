@@ -375,6 +375,9 @@ class Function(Code):
         self.pattern = self.get_pattern()
         super().__init__()
 
+    def add_condition(self, name: str, main: DQL_Object):
+        self.field_class = eq(self.params[0])
+        self.add(name, main)
 
     @classmethod
     def name(cls) -> str:
@@ -610,6 +613,10 @@ class Year(DatePart):
     @classmethod
     def alternative_names(cls) -> dict:
         return {}
+
+    def add_condition(self, name: str, main: DQL_Object):
+        value = self.params[0]
+        Between(f'{value}-01-01', f'{value}-12-31').add(name, main)
 
 
 class Month(DatePart):
@@ -878,6 +885,7 @@ def quoted(value) -> str:
     if isinstance(value, str):
         if re.search(r'\bor\b', value, re.IGNORECASE):
             raise PermissionError('Possible SQL injection attempt')
+        value = re.sub(r"[']", '', value)
         return f"'{value}'"
     elif isinstance(value, Select):
         query: Select = value
@@ -1213,7 +1221,7 @@ class Between:
 
     def literal(self) -> Where:
         return Where('BETWEEN {} AND {}'.format(
-            self.start, self.end
+            quoted(self.start), quoted(self.end),
         ))
 
     def add(self, name: str, main:DQL_Object):
@@ -2331,6 +2339,13 @@ class CypherParser(Parser):
                 self.add_field(expr, [class_type])
         query.join_type = join_type
 
+    @staticmethod
+    def get_func_class(function: str) -> Function:
+        func_class = FUNCTION_CLASS.get(function)
+        if not func_class:
+            raise ValueError(f'Unknown function `{function}`.')
+        return func_class
+
     def add_where(self, token: str):
         elements = [t for t in self.REGEX['alias_pos'].split(token) if t]
         if len(elements) == 3:
@@ -2339,9 +2354,14 @@ class CypherParser(Parser):
         else:
             field, *condition = self.REGEX['condition'].split(token)
             query: Select = self.queries[-1]
-            schema: Schema = self.public_schema
-            if schema:
-                field = schema.most_similar(field, query.table_name)            
+        *functions, field = field.split('$')
+        schema: Schema = self.public_schema
+        if schema:
+            field = schema.most_similar(field, query.table_name)            
+        if functions:
+            func_class: Function = self.get_func_class(functions[0])
+            func_class(condition[-1]).add_condition(field, query)
+            return
         Where(' '.join(condition)).add(field, query)
     
     def add_order(self, token: str):
@@ -2385,9 +2405,7 @@ class CypherParser(Parser):
             if function:                
                 if is_count and not field:
                     field = query.key_field or 'id'
-                func_class = FUNCTION_CLASS.get(function)
-                if not func_class:
-                    raise ValueError(f'Unknown function `{function}`.')
+                func_class = self.get_func_class(function)
                 class_list = [ func_class().As(alias, extra_classes) ]
                 if not field and schema:
                     field = schema.field_for_function(query.table_name, func_class)
@@ -3364,9 +3382,9 @@ class RuleDateFuncReplace(Rule):
             ]
             if len(tokens) < 3:
                 continue
-            func, field, *rest, year = tokens
+            func, field, *rest, const = tokens
             temp = Select(f'{target.table_name} {target.alias}')
-            Between(f'{year}-01-01', f'{year}-12-31').add(field, temp)
+            Year(const).add_condition(field, temp)
             target.values[WHERE][i] = ' AND '.join(temp.values[WHERE])
 
 
@@ -3777,3 +3795,10 @@ class Delete(DML_Object):
 # ===========================================================================================//
 
 
+if __name__ == "__main__":
+    # Between.is_literal = True
+    DQL_Object.ALIAS_FUNC = lambda t: t.split('_')[-1]
+    CAMPOS_CAB = 'DTNEG, CODPARC, VLRNOTA' + '?year$DTNEG = 2025'
+    CAMPOS_ITE = 'CODPROD, QTDNEG, VLRUNIT'
+    query = detect(f"TGFITE_ITE({CAMPOS_ITE}, NUNOTA) <- TFGCAB_CAB(NUNOTA, {CAMPOS_CAB})")
+    print(query)

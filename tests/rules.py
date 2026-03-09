@@ -50,6 +50,11 @@ def optimized_date_func() -> bool:
     p1: Select
     p1.optimize([RuleDateFuncReplace])
     p2 = Select(PRODUCT_TABLE, last_sale=Between('2024-01-01', '2024-12-31'))
+    print('@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@')
+    print(p1)
+    print('###############################################')
+    print(p2)
+    print('@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@')
     return p1 == p2
 
 def all_optimizations() -> bool:
