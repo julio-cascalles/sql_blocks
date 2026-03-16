@@ -509,6 +509,10 @@ class Re(Function):
     inputs = [CHAR, CHAR, INT, INT]
     output = CHAR
 
+    def __init__(self, *params: list):
+        params = ','.join( quoted(p) for p in params if p )
+        super().__init__(params)
+
     @classmethod
     def alternative_names(cls) -> dict:
         return {
@@ -1876,6 +1880,8 @@ class PandasLanguage(DataAnalysisLanguage):
             return ''
         if len(values) == 1 and ' ' in values[0]:
             values = values[0].split()
+        if OrderBy.sort == SortType.DESC:
+            values.append(SortType.DESC.value)
         ascending = OrderBy.ascending(values[-1])
         if not ascending:
             values = values[:-1]
@@ -3796,9 +3802,25 @@ class Delete(DML_Object):
 
 
 if __name__ == "__main__":
-    # Between.is_literal = True
-    DQL_Object.ALIAS_FUNC = lambda t: t.split('_')[-1]
-    CAMPOS_CAB = 'DTNEG, CODPARC, VLRNOTA' + '?year$DTNEG = 2025'
-    CAMPOS_ITE = 'CODPROD, QTDNEG, VLRUNIT'
-    query = detect(f"TGFITE_ITE({CAMPOS_ITE}, NUNOTA) <- TFGCAB_CAB(NUNOTA, {CAMPOS_CAB})")
-    print(query)
+    SCRIPT = """
+    SELECT
+        e.gender, d.region,
+        Avg(e.age)
+    FROM
+        Employees e
+        JOIN Departments d ON (e.dept_id = d.id)
+    WHERE
+        (
+            e.name LIKE 'Alice%'
+            OR
+            e.name LIKE '%Smith'
+        )
+        AND d.sector = 656
+    GROUP BY
+        e.gender, d.region
+    ORDER BY
+        d.region DESC
+    """
+    query = detect(SCRIPT)
+    print(query.translate_to(PandasLanguage))
+    
