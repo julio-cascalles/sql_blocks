@@ -3802,25 +3802,27 @@ class Delete(DML_Object):
 
 
 if __name__ == "__main__":
-    SCRIPT = """
-    SELECT
-        e.gender, d.region,
-        Avg(e.age)
-    FROM
-        Employees e
-        JOIN Departments d ON (e.dept_id = d.id)
-    WHERE
-        (
-            e.name LIKE 'Alice%'
-            OR
-            e.name LIKE '%Smith'
+    Parser.public_schema = Schema('''
+        create table Customer(
+            id int primary key,
+            driver_licence char(13), 
+            name varchar(255),
+            region int /*     1=North
+                            2=South
+                            3=East
+                            4=West
+            ****************************************************/
+        );
+        create table Product(
+            serial_number int primary key,
+            name varchar(255) unique,
+            price float not null
+        );
+        create table Sales(
+            pro_id int references Product, -- serial number
+            cus_id char(13) references Customer(id)
+            quantity float default 1,
+            ref_date date,
+            order_num int primary key
         )
-        AND d.sector = 656
-    GROUP BY
-        e.gender, d.region
-    ORDER BY
-        d.region DESC
-    """
-    query = detect(SCRIPT)
-    print(query.translate_to(PandasLanguage))
-    
+    ''')

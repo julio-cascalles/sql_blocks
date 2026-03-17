@@ -1,37 +1,14 @@
 import re
-from sql_blocks import detect, Insert, Schema, Parser
-
+from sql_blocks import detect, Insert
+from tests.util import (
+    create_public_schema, 
+    remove_public_schema
+)
 
 
 def insert_from_query() -> Insert:
     query = detect("SELECT quantity, cus_id, pro_id FROM Sales WHERE ref_date > '2025-12-24' ")
     return Insert(query)
-
-def create_public_schema():
-    Parser.public_schema = Schema('''
-        create table Customer(
-            id int primary key,
-            driver_licence char(13), 
-            name varchar(255),
-            region int /*     1=North
-                            2=South
-                            3=East
-                            4=West
-            ****************************************************/
-        );
-        create table Product(
-            serial_number int primary key,
-            name varchar(255) unique,
-            price float not null
-        );
-        create table Sales(
-            pro_id int references Product, -- serial number
-            cus_id char(13) references Customer(driver_licence)
-            quantity float default 1,
-            ref_date date,
-            order_num int primary key
-        )
-    ''')
 
 def insert_from_dict() -> Insert:
     return Insert({
@@ -75,21 +52,19 @@ def remove_spaces(txt: str) -> str:
     return re.sub(r'\s+', ' ', txt)
 
 def compare_insert_from_dict() -> bool:
-    if not Parser.public_schema:
-        create_public_schema()
+    create_public_schema()
     txt1 = str(insert_from_dict())
     txt2 = text_insert_from_dict()
     return remove_spaces(txt1) == remove_spaces(txt2)
 
 def compare_insert_from_query() -> bool:
-    Parser.public_schema = None
+    remove_public_schema()
     txt1 = str(insert_from_query())
     txt2 = text_insert_from_query()
     return remove_spaces(txt1) == remove_spaces(txt2)
 
 def compare_insert_from_list() -> bool:
-    if not Parser.public_schema:
-        create_public_schema()
+    create_public_schema()
     txt1 = str(insert_from_list())
     txt2 = text_insert_from_list()
     return remove_spaces(txt1) == remove_spaces(txt2)

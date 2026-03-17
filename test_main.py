@@ -43,7 +43,8 @@ from tests.cte import(
     cte_factory_cypher_results
 )
 from tests.mix import (
-    p1_mix_p2, pivot_summary, remove_mix, compare_mix_join
+    p1_mix_p2, pivot_summary, remove_mix, compare_mix_join,
+    auto_complete_cypher
 )
 from tests.DML import (
     compare_insert_from_dict, compare_insert_from_list, compare_insert_from_query
@@ -318,3 +319,6 @@ def test_insert_from_list():
 
 def test_insert_from_query():
     assert compare_insert_from_query()
+
+def test_auto_complete():
+    assert auto_complete_cypher() == 3

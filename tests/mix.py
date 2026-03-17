@@ -1,8 +1,10 @@
 import re
 from sql_blocks.sql_blocks import (
     mix, Select, eq, gt, OrderBy, 
-    Field, Table, PrimaryKey,
+    Field, Table, PrimaryKey, 
+    CypherParser, ForeignKey
 )
+from tests.util import create_public_schema
 
 
 PERSON1_SCRIPT =  """
@@ -49,7 +51,6 @@ def expected_mix(p1_fields: bool = False, p2_fields: bool = False) -> Select:
         )
     return  result
 
-
 def pivot_summary() -> dict:
     result = {}
     query = mix(PIVOT_SCRIPT)
@@ -78,10 +79,45 @@ def normal_join() -> Select:
         ref_date=[Field, OrderBy.DESC]
     )
 
-
 def compare_mix_join() -> bool:
     Select.ALIAS_FUNC = lambda t: t[0].lower()
     q1 = mix(PERSON1_SCRIPT, SCRIPT_TO_JOIN)
     q2 = normal_join()
     Select.ALIAS_FUNC = None
     return q1 == q2
+
+def auto_complete_cypher() -> int:
+    # ----------------------------------
+    def show_difference(q1: Select, q2: Select):
+        print('@'*100)
+        print(q1)
+        print('-'*100)
+        print(q2)
+        print('@'*100)
+    # ----------------------------------
+    create_public_schema()
+    c1, s1, p1 = CypherParser(
+        'c(na,re) <- s(q ^ref) -> p(na,pri)',
+    Select).queries
+    c2 = Select(
+        'Customer c', id=PrimaryKey
+    ).add_fields('name, region')
+    if c1 != c2:
+        show_difference(c1, c2)
+        return 0
+    p2 = Select(
+        'Product p', serial_number=PrimaryKey
+    ).add_fields('name, price')
+    if p1 != p2:
+        show_difference(p1, p2)
+        return 1
+    s2 = Select(
+        'Sales s', quantity=Field, 
+        ref_date=[OrderBy, Field],         
+        pro_id=ForeignKey('Product'),
+        cus_id=ForeignKey('Customer')
+    )
+    if s1 != s2:
+        show_difference(s1, s2)
+        return 2
+    return 3
