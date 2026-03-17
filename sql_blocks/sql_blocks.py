@@ -3629,7 +3629,11 @@ def execute(params: list, program: str='python -m sql_blocks') -> Select:
             raise ValueError(f'{fname} does not exists.')
         with open(fname, 'r') as f:
             scripts.append( f.read() )
-    return mix( *scripts, remove=file_named_remove() )
+    try:
+        query = mix( *scripts, remove=file_named_remove() )
+    except:
+        print('\t Failed to load scripts. Check the file encoding.')
+    return query
 
 
 class DDL_Object:
