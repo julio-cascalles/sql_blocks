@@ -2,6 +2,9 @@ from sys import argv
 from sql_blocks import execute
 
 
-print(
-    execute(argv) or ''
-)
+try:
+    print(
+        execute(argv) or ''
+    )
+except:
+    print('\t Failed to load scripts. Check the file encoding.')
