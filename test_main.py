@@ -15,7 +15,7 @@ from tests.rules import (
     all_optimizations, 
     replace_join_by_subselect
 )
-from tests.special_cases import (
+from tests.others import (
     error_inverted_condition, named_fields_in_nested_query,
     first_name_from_expr_field, orderby_field_index,
     many_fields_and_groups, compare_individual_fields,
@@ -49,6 +49,7 @@ from tests.mix import (
 from tests.DML import (
     compare_insert_from_dict, compare_insert_from_list, compare_insert_from_query
 )
+from tests.case import range_and_if_found
 
 
 _best_movies = best_movies()
@@ -322,3 +323,7 @@ def test_insert_from_query():
 
 def test_auto_complete():
     assert auto_complete_cypher() == 3
+
+def test_range_and_if():
+    assert range_and_if_found() == {'age': True, 'gender': True}
+

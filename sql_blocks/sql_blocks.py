@@ -1045,6 +1045,7 @@ class Not(Where):
 class Case:
     break_lines = True
     quoted_result: bool = True
+    level: int = 0
 
     def __init__(self, field: str):
         self.__conditions = {}
@@ -1074,13 +1075,13 @@ class Case:
             is_quoted = re.search(r'[\'"]', s)
             no_alias = (is_quoted or not main)
             return s if no_alias else Field.format(s, main)
-        TABULATION = '\t\t' if self.break_lines else ' '
+        TABULATION = '\t' * (self.level+1) if self.break_lines else ' '
         LINE_BREAK = '\n' if self.break_lines else ' '
         default = self.default
         if not field:
             field = self.field
-        return 'CASE{brk}{cond}{df}{tab}END{alias}'.format(
-            brk=LINE_BREAK,
+        return '{pfx}CASE{brk}{cond}{df}{tab}END{alias}'.format(
+            brk=LINE_BREAK, pfx=LINE_BREAK+TABULATION if self.level else '',
             cond=LINE_BREAK.join(
                 f'{TABULATION}WHEN {put_alias(field)} {cond.content} THEN {put_alias(res)}'
                 for res, cond in self.__conditions.items()
@@ -1148,10 +1149,7 @@ class Case:
 
 
 class If(Code, Frame):
-    """
-    Behaves like an aggregation function
-    """
-    def __init__(self, field: str, func_class: Function, condition: Where=None, default=0):
+    def __init__(self, field: str, condition: Where=None, func_class: Function=None, default=0):
         if not condition:
             field, *elements = re.split(r'([<>=]|\bin\b|\blike\b)', field, re.IGNORECASE)
             condition = Where( ''.join(elements) )
@@ -1162,14 +1160,27 @@ class If(Code, Frame):
         self.default = default
         super().__init__()
 
-    def format(self, name: str, main: DQL_Object) -> str:
+    def get_case(self, name: str) -> Case:
         quoted_result = Case.quoted_result
-        Case.quoted_result = False
-        _case = Case(self.field).when(self.condition).then(name).else_value(self.default)
+        _case = Case(self.field)
+        if isinstance(self.condition, dict):
+            for value, name in self.condition.items():
+                _case = _case.when( eq(value) ).then(name)
+        else:
+            Case.quoted_result = False
+            _case = _case.when(self.condition)
+            if name:
+                _case = _case.then(name)
+            _case = _case.else_value(self.default)
         Case.quoted_result = quoted_result
-        return self.func_class(
-            _case.format('', main)
-        ).format(name, main)
+        return _case
+
+    def format(self, name: str, main: DQL_Object) -> str:
+        if self.func_class:
+            return self.func_class(
+                self.get_case(name).format('', main)
+            ).format(name, main)
+        return self.get_case(name).format(name, main)
     
     def get_pattern(self) -> str:
         return ''
@@ -1192,8 +1203,8 @@ class Pivot:
             else:
                 label = value
             If(
-                name, self.func_class,
-                self.where_method(value)
+                name, func_class=self.func_class,
+                condition=self.where_method(value)
             ).As(label).add(self.result, main)
         Partition.params = partition_params
 
@@ -1245,14 +1256,29 @@ class SameDay(Between):
 class Range(Case):
     INC_FUNCTION = lambda x: x + 1
 
+    @staticmethod
+    def sorted_numeric_key(data: dict) -> dict:
+        data = {
+            (k if isinstance(k, (int, float)) else v) :
+            (v if isinstance(k, (int, float)) else k)
+            for k, v in data.items()
+        }
+        return sorted( data.items() )
+
     def __init__(self, field: str, values: dict, default: str=None):
         super().__init__(field)
         start = 0
         cls = self.__class__
-        for label, value in sorted(values.items(), key=lambda item: item[1]):
+        for value, label in self.sorted_numeric_key(values):
+            if isinstance(label, If):                
+                Case.level += 1
+                label = str( label.get_case('') )
+                Case.quoted_result = False                
             self.when(
                 Between(start, value).literal()
             ).then(label)
+            Case.quoted_result = True
+            Case.level -= 1
             start = cls.INC_FUNCTION(value)
         if default:
             self.else_value(default)
@@ -3801,28 +3827,3 @@ class Delete(DML_Object):
 # ===========================================================================================//
 
 
-if __name__ == "__main__":
-    Parser.public_schema = Schema('''
-        create table Customer(
-            id int primary key,
-            driver_licence char(13), 
-            name varchar(255),
-            region int /*     1=North
-                            2=South
-                            3=East
-                            4=West
-            ****************************************************/
-        );
-        create table Product(
-            serial_number int primary key,
-            name varchar(255) unique,
-            price float not null
-        );
-        create table Sales(
-            pro_id int references Product, -- serial number
-            cus_id char(13) references Customer(id)
-            quantity float default 1,
-            ref_date date,
-            order_num int primary key
-        )
-    ''')

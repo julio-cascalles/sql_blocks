@@ -434,9 +434,9 @@ Usefull to conditional Sum, Avg, Count...
 **Example:**
 
     Select('Loan', 
-        penalty=If('days_late', Sum, gt(0))
+        penalty=If('days_late', gt(0), Sum)
     )
-    # ...OR... penalty=If('days_late > 0', Sum)
+    # ...OR... penalty=If('days_late > 0', func_class=Sum)
 
 results...
 ```
