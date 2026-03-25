@@ -1197,6 +1197,7 @@ class Pivot:
     def add(self, name: str, main: 'Select'):
         partition_params = Partition.params
         Partition.params = None
+        Case.break_lines = False
         for value in self.values:
             if isinstance(value, (tuple, list)):
                 value, label = value
@@ -1269,8 +1270,9 @@ class Range(Case):
         super().__init__(field)
         start = 0
         cls = self.__class__
+        Case.level = 1
         for value, label in self.sorted_numeric_key(values):
-            if isinstance(label, If):                
+            if isinstance(label, If):
                 Case.level += 1
                 label = str( label.get_case('') )
                 Case.quoted_result = False                
@@ -1278,7 +1280,8 @@ class Range(Case):
                 Between(start, value).literal()
             ).then(label)
             Case.quoted_result = True
-            Case.level -= 1
+            if isinstance(label, If):
+                Case.level -= 1
             start = cls.INC_FUNCTION(value)
         if default:
             self.else_value(default)
@@ -2522,10 +2525,10 @@ class CypherParser(Parser):
         for token in self.get_tokens(txt):
             if not token or (token in '([' and self.method):
                 continue
-            if self.method:
-                self.method(token)
             if token in ')]' and has_side_table():
                 self.add_foreign_key('')
+            elif self.method:
+                self.method(token)
             self.method = self.TOKEN_METHODS.get(token.upper())
         # ====================================
 
@@ -3501,6 +3504,29 @@ def detect(text: str, join_method = join_queries, format: str='') -> Select | li
         result = join_method(result)
     return result
 
+def extract_comments(query: Select, text: str) -> bool:
+    REGEX_COMMENT = re.compile(r'(\w+)\s*[,]*\s*/\*([\s\S]*?)\*/')
+    found = False
+    for field, comment in REGEX_COMMENT.findall(text):
+        query.delete(field, [SELECT])
+        class_type = Pivot
+        result = 1
+        if '=' not in comment:
+            args = comment.strip().split()
+        elif query.values.get(GROUP_BY):
+            args = re.findall(r"(\w+)[=](\w+)", comment)
+        else:
+            result = field
+            alias = re.findall(r'^(\w+)[:]', comment.strip())
+            field = alias[0] if alias else ''
+            class_type = Range
+            names = re.findall(r'(\w+)=', comment)
+            values = re.findall(r'=(\d+)', comment)
+            args = {name: int(value) for name, value in zip(names, values)}
+        class_type(result, args).add(field, query)
+        found = True
+    return found
+
 def mix(main_script: str, complement: str='', remove: bool=False) -> Select:
     """
     Completes a query using parts of another query.
@@ -3522,33 +3548,13 @@ def mix(main_script: str, complement: str='', remove: bool=False) -> Select:
         DQL_Object.ALIAS_FUNC = None
     q1, *others = parser(main_script, Select).queries
     # ----------------------------------------------------
-    def extract_comments() -> bool:
-        REGEX_COMMENT = re.compile(r'(\w+)\s*[,]*\s*/\*([\s\S]*?)\*/')
-        for field, comment in REGEX_COMMENT.findall(main_script):
-            q1.delete(field, [SELECT])
-            class_type = Pivot
-            result = 1
-            if '=' not in comment:
-                args = comment.strip().split()
-            elif q1.values.get(GROUP_BY):
-                args = re.findall(r"(\w+)[=](\w+)", comment)
-            else:
-                result = field
-                found = re.findall(r'^(\w+)[:]', comment.strip())
-                field = found[0] if found else ''
-                class_type = Range
-                names = re.findall(r'(\w+)=', comment)
-                values = re.findall(r'=(\d+)', comment)
-                args = {name: int(value) for name, value in zip(names, values)}
-            class_type(result, args).add(field, q1)
-    # ----------------------------------------------------
     is_join: bool = False
     if not complement:
         try:
             if parser == CypherParser:                
                 q1 = join_queries([q1] + others)
             elif parser == SQLParser:
-                extract_comments()
+                extract_comments(q1, main_script)
             return q1
         except:
             return None
@@ -3646,7 +3652,9 @@ def execute(params: list, program: str='python -m sql_blocks') -> Select:
             if is_help:
                 class_type.help()
                 return
-            return func(scripts[-1], args or [''])
+            result = func(scripts[-1], args or [''])
+            extract_comments(result, scripts[-1])
+            return result
         fname, ext = os.path.splitext(param)
         if not ext:
             ext = '.sql'
@@ -3827,3 +3835,12 @@ class Delete(DML_Object):
 # ===========================================================================================//
 
 
+if __name__ == "__main__":
+    query = detect("""
+        Customer(cus_name@, id) <- Sales(cus_id)
+    """)
+    query(
+        ref_date=Between('2023-01-01', '2023-12-31'),
+        total=[Having.sum(gt(5000)), Avg]
+    )
+    print(query)
