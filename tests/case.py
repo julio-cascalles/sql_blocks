@@ -26,6 +26,7 @@ EXPECTED_PTYPES = [
 
 def range_and_if_found() -> dict[str, bool]:
     Parser.public_schema = None
+    Case.break_lines = True
     query = detect('select name from Person p')
     query(
         ptype=Range('age', {

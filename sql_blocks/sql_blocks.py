@@ -485,6 +485,18 @@ class Function(Code):
 
 
 
+class EDA(Code):
+    def __init__(self, **values):
+        self.func_list = values
+
+    def add(self, name: str, main: DQL_Object):
+        function: Function = None
+        for alias, function in self.func_list.items():
+            if function not in Function.descendants():
+                raise ValueError(f'{function.__name__} is not a function.')
+            function().As(alias).add(name, main)
+
+
 
 # ---- String Functions: ---------------------------------
 class SubString(Function):
@@ -3836,11 +3848,14 @@ class Delete(DML_Object):
 
 
 if __name__ == "__main__":
-    query = detect("""
-        Customer(cus_name@, id) <- Sales(cus_id)
-    """)
-    query(
-        ref_date=Between('2023-01-01', '2023-12-31'),
-        total=[Having.sum(gt(5000)), Avg]
+    class StdDev(Function):
+        ...
+    # ---------------------------------
+    query = Select(
+        'supply s',
+        lead_time_days=EDA(
+            min_real=Min, avg_real=Avg,
+            max_real=Max, dev_real=StdDev
+        )
     )
     print(query)
