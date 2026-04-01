@@ -197,6 +197,11 @@ class DQL_Object:
             return s1.symmetric_difference(s2)
         return s1 - s2
 
+    def increment_alias(self) -> str:
+        name, value = re.findall(r'([A-Za-z]+)(\d+)*', self.alias)[0]
+        value = int(value) if value else 1
+        return f"{name}{value+1}"
+
     def delete(self, search: str, keys: list=USUAL_KEYS, exact: bool=False):
         search = re.escape(search)
         if exact:
@@ -967,6 +972,9 @@ class Where:
     def inside(cls, values, keyword: str='IN'):
         if isinstance(values, list):
             values = ','.join(quoted(v) for v in values)
+        elif isinstance(values, Select):
+            query: Select = values
+            values = query.justify(30)
         return cls(f'{keyword} ({values})')
 
     @classmethod
@@ -1036,10 +1044,12 @@ class Where:
         main.values.setdefault(WHERE, []).append(cls.format(name, self))
 
 
-eq, contains, gt, gte, lt, lte, is_null, inside = (
-    getattr(Where, method) for method in 
-    ('eq', 'contains', 'gt', 'gte', 'lt', 'lte', 'is_null', 'inside')
-) 
+WHERE_METHODS = (
+    Where.eq, Where.contains, Where.gt, Where.gte,
+    Where.lt, Where.lte, Where.is_null, Where.inside
+)
+
+eq, contains, gt, gte, lt, lte, is_null, inside = WHERE_METHODS
 startswith, endswith = [
     lambda x: contains(x, Position.StartsWith),
     lambda x: contains(x, Position.EndsWith)
@@ -1057,7 +1067,6 @@ class Not(Where):
 class Case:
     break_lines = True
     quoted_result: bool = True
-    level: int = 0
 
     def __init__(self, field: str):
         self.__conditions = {}
@@ -1065,6 +1074,7 @@ class Case:
         self.field = field
         self.current_condition = None
         self.fields = []
+        self.level: int = 0
 
     def when(self, condition: Where):
         self.current_condition = condition
@@ -1087,20 +1097,21 @@ class Case:
             is_quoted = re.search(r'[\'"]', s)
             no_alias = (is_quoted or not main)
             return s if no_alias else Field.format(s, main)
-        TABULATION = '\t' * (self.level+1) if self.break_lines else ' '
+        TABULATION = '    ' * (self.level+2) if self.break_lines else ' '
         LINE_BREAK = '\n' if self.break_lines else ' '
         default = self.default
+        body = ''
+        for res, cond in self.__conditions.items():
+            body += '{brk}{tab}    WHEN {fld} {cond} THEN {alias}'.format(
+                    tab=TABULATION, fld=put_alias(field),
+                    brk=LINE_BREAK, alias=put_alias(res), cond=cond.content
+                )           
         if not field:
             field = self.field
-        return '{pfx}CASE{brk}{cond}{df}{tab}END{alias}'.format(
-            brk=LINE_BREAK, pfx=LINE_BREAK+TABULATION if self.level else '',
-            cond=LINE_BREAK.join(
-                f'{TABULATION}WHEN {put_alias(field)} {cond.content} THEN {put_alias(res)}'
-                for res, cond in self.__conditions.items()
-            ),
+        return '{pfx}CASE{body}{df}{brk}{tab}END{alias}'.format(
+            brk=LINE_BREAK, body=body, alias=f' AS {name}' if name else '', tab=TABULATION,
             df=f'{LINE_BREAK}{TABULATION}ELSE {default}' if not default is None else '',
-            tab='\n\t' if self.break_lines else ' ',
-            alias=f' AS {name}' if name else ''
+            pfx=LINE_BREAK+TABULATION if self.level else ''
         )
     
     def __str__(self):
@@ -1282,18 +1293,17 @@ class Range(Case):
         super().__init__(field)
         start = 0
         cls = self.__class__
-        Case.level = 1
+        Case.break_lines = True
         for value, label in self.sorted_numeric_key(values):
             if isinstance(label, If):
-                Case.level += 1
-                label = str( label.get_case('') )
+                _case = label.get_case('')
+                _case.level = 1
+                label = str(_case)
                 Case.quoted_result = False                
             self.when(
                 Between(start, value).literal()
             ).then(label)
             Case.quoted_result = True
-            if isinstance(label, If):
-                Case.level -= 1
             start = cls.INC_FUNCTION(value)
         if default:
             self.else_value(default)
@@ -1442,15 +1452,19 @@ class GroupBy(Clause):
         cls().__add(name, main)
 
 
-class Having:
+class Compare:
     def __init__(self, function: Function, condition: Where):
         self.function = function
         self.condition = condition
 
     def add(self, name: str, main:DQL_Object):
-        main.values[GROUP_BY][-1] += ' HAVING {} {}'.format(
-            self.function().format(name, main), self.condition.content
-        )
+        if self.condition not in WHERE_METHODS:
+            raise ValueError('Compare.condition must be of a Where method.')
+        sub = SubSelect(f"{main.table_name} {main.increment_alias()}")
+        self.function.add(name, sub)
+        condition: Where = self.condition(sub)
+        condition.add(name, main)
+        Field.add(name, main)
     
     @classmethod
     def avg(cls, condition: Where):
@@ -1472,6 +1486,12 @@ class Having:
     def count(cls, condition: Where):
         return cls(Count, condition)
 
+
+class Having(Compare):
+    def add(self, name: str, main:DQL_Object):
+        main.values[GROUP_BY][-1] += ' HAVING {} {}'.format(
+            self.function().format(name, main), self.condition.content
+        )
 
 class Rule:
     @classmethod
@@ -2892,6 +2912,20 @@ class Select(DQL_Object):
         FieldList(fields, class_types).add('', self)
         return self
 
+    def justify(self, line_size: int) -> str:
+        self.break_lines = False
+        result, line = [], ''
+        keywords = '|'.join(KEYWORD)
+        for word in re.split(fr'({keywords}|AND|OR|JOIN|,)', str(self)):
+            if len(line) >= line_size:
+                result.append(line)
+                line = ''
+            line += word
+        if line:
+            result.append(line)
+        return '\n    '.join(result)
+
+
     def translate_to(self, language: QueryLanguage|str|LanguageEnum) -> str:
         if isinstance(language, str):
             try:
@@ -2950,24 +2984,10 @@ class CTE(Select):
             size += sum(len(v) for v in self.values.get(key, []) if '\n' not in v)
         if size > 70:
             self.break_lines = True
-        # ---------------------------------------------------------
-        def justify(query: Select) -> str:
-            query.break_lines = False
-            result, line = [], ''
-            keywords = '|'.join(KEYWORD)
-            for word in re.split(fr'({keywords}|AND|OR|JOIN|,)', str(query)):
-                if len(line) >= self.LINE_SIZE:
-                    result.append(line)
-                    line = ''
-                line += word
-            if line:
-                result.append(line)
-            return '\n    '.join(result)
-        # ---------------------------------------------------------
         return 'WITH {}{} AS (\n    {}\n){}'.format(
             self.prefix, self.table_name, 
             '\n\tUNION ALL\n    '.join(
-                justify(q) for q in self.query_list
+                q.justify(self.LINE_SIZE) for q in self.query_list
             ), super().__str__() if self.show_query else ''
         )
 
@@ -3848,14 +3868,14 @@ class Delete(DML_Object):
 
 
 if __name__ == "__main__":
-    class StdDev(Function):
-        ...
-    # ---------------------------------
-    query = Select(
-        'supply s',
-        lead_time_days=EDA(
-            min_real=Min, avg_real=Avg,
-            max_real=Max, dev_real=StdDev
-        )
+    GENDER_FIELD = 'gender'
+    query = detect('select name from Person p')
+    query(
+        ptype=Range('age', {
+            13: If(GENDER_FIELD, {'M': 'boy',       'F': 'girl'}),
+            20: If(GENDER_FIELD, {'M': 'young man', 'F': 'young woman'}),
+            40: If(GENDER_FIELD, {'M': 'man',       'F': 'woman'}),
+            99: If(GENDER_FIELD, {'M': 'old man',   'F': 'old woman'})
+        })
     )
     print(query)

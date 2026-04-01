@@ -880,6 +880,53 @@ GROUP BY
         v.name
 ```
 
+### 16.2 Multiple references to the same field
+
+#### 16.2.1 - EDA class
+You can perform exploratory analysis of a field by passing 
+several functions to the EDA class, like this:
+```
+query = Select(
+    'Support_Ticket',
+    response_time=EDA(
+        faster=Min, slower=Max, average_time=Avg
+    )
+)
+```
+...is the same of...
+```
+query = Select(
+    'Support_Ticket',
+    response_time=[
+        Min().As('faster'),
+        Max().As('slower'),
+        Avg().As('average_time')
+    ]
+)
+```
+
+#### 16.2.2 - Compare class
+Makes the field compare with itself within a subquery, using 
+the indicated function.
+> For example: employees with salaries above the average employee salary.
+```
+    query = Select(
+        'Employees e', name=Field,
+        salary=Compare.avg(Where.gt)
+    )
+```
+...results in...
+```
+SELECT
+        e.name,
+        e.salary
+FROM
+        Employees e
+WHERE
+        e.salary > (SELECT Avg(e2.salary) FROM Employees e2)
+```
+
+
 ---
 ### 17 - CTE and Recursive classes
 
