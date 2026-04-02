@@ -1101,13 +1101,13 @@ class Case:
         LINE_BREAK = '\n' if self.break_lines else ' '
         default = self.default
         body = ''
+        if not field:
+            field = self.field
         for res, cond in self.__conditions.items():
             body += '{brk}{tab}    WHEN {fld} {cond} THEN {alias}'.format(
                     tab=TABULATION, fld=put_alias(field),
                     brk=LINE_BREAK, alias=put_alias(res), cond=cond.content
                 )           
-        if not field:
-            field = self.field
         return '{pfx}CASE{body}{df}{brk}{tab}END{alias}'.format(
             brk=LINE_BREAK, body=body, alias=f' AS {name}' if name else '', tab=TABULATION,
             df=f'{LINE_BREAK}{TABULATION}ELSE {default}' if not default is None else '',
@@ -3868,14 +3868,8 @@ class Delete(DML_Object):
 
 
 if __name__ == "__main__":
-    GENDER_FIELD = 'gender'
-    query = detect('select name from Person p')
-    query(
-        ptype=Range('age', {
-            13: If(GENDER_FIELD, {'M': 'boy',       'F': 'girl'}),
-            20: If(GENDER_FIELD, {'M': 'young man', 'F': 'young woman'}),
-            40: If(GENDER_FIELD, {'M': 'man',       'F': 'woman'}),
-            99: If(GENDER_FIELD, {'M': 'old man',   'F': 'old woman'})
-        })
+    query = Select(
+        'Emprestimo e',
+        taxa=If('atraso', gt(0), Sum)
     )
     print(query)
