@@ -25,6 +25,95 @@ USUAL_KEYS = [SELECT, WHERE, GROUP_BY, ORDER_BY, LIMIT]
 TO_LIST = lambda x: x if isinstance(x, list) else [] if x is None else [x]
 
 
+class FuncNode:
+    text: str = ''
+    stack = []
+    ref: 'FuncNode' = None
+
+    def __init__(self, func_name: str, open: int):
+        self.func_name: str =  func_name
+        self.open: int = open
+        self.close: int = 0
+        node: 'FuncNode' = FuncNode.ref
+        if node:
+            node.get_suffix(open - len(func_name))
+            FuncNode.ref = None
+        self.parent: 'FuncNode' = None
+        self.params: list = []
+        self.pendent: bool = True
+        self.field: str  = ''
+        self.suffix: str = ''
+
+    def get_suffix(self, open: int=0):
+        if open:
+            text = self.text[self.close: open-1]
+        else:
+            text = self.text[self.close:]
+        self.suffix = re.sub(r'\s+', ' ',
+                re.split( r'\bfrom\b|\bFROM\b', text)[0]
+        )
+
+    def set_params(self, close: int):
+        open = self.open
+        if self.parent:
+            self.parent.open = close + 1
+        for param in self.text[open:close-1].split(','):
+            param = param.strip()
+            if not param:
+                continue
+            *alias, field = param.split('.')
+            if field.isidentifier():
+                self.field = param
+            self.params.append(param)
+        self.pendent = False
+        self.close = close
+        FuncNode.ref = self
+
+    def __str__(self):
+        separator = ' ' if self.func_name.upper() == 'CAST' else ','
+        return '{}({}){}'.format(
+            self.func_name, separator.join(
+                str(param) for param in self.params if param 
+            ), self.suffix
+        )
+
+    @classmethod
+    def create(cls, text: str, callback: callable=None) -> str:
+        cls.text = text
+        cls.stack = []
+        ignore: str = ''
+        curr_node: 'FuncNode' = None
+        last_node: 'FuncNode' = None
+        for found in re.finditer(r'(\w+)[(]|([)\'"])', text):
+            func_name, separator = found.groups()
+            if separator in ["'", '"']:
+                if ignore == separator:
+                    ignore = ''
+                elif not ignore:
+                    ignore = separator
+            if ignore:
+                continue
+            if separator == ')':
+                if not curr_node:
+                    raise SyntaxError("Incorrect syntax near ')'")
+                curr_node.set_params( found.end() )
+                curr_node = curr_node.parent
+            elif func_name:
+                last_node = curr_node
+                curr_node = cls( func_name, found.end() )
+                if callback:
+                    callback(curr_node)
+                if last_node and last_node.pendent:
+                    curr_node.parent = last_node
+                    target = last_node.params
+                else:
+                    target = cls.stack
+                target.append(curr_node)
+        if FuncNode.ref:
+            FuncNode.ref.get_suffix()
+        return cls.stack
+
+
 class DQL_Object:
     ALIAS_FUNC = None
     """    ^^^^^^^^^^^^^^^^^^^^^^^^
@@ -117,25 +206,7 @@ class DQL_Object:
 
     @classmethod
     def split_functions(cls, text: str) -> list:
-        result = []
-        level = 0
-        start = 0
-        ignore = False
-        for found in re.finditer(r'([(,)\'"])', text):
-            char = found.group()
-            if char in ["'", '"']:
-                ignore = not ignore
-            if ignore:
-                continue
-            if char == '(':
-                level += 1
-            elif char == ')':
-                level -= 1
-            elif char == ',' and level == 0:
-                end = found.end()
-                result.append(text[start:end-1])
-                start = end+1
-        return result + [ text[start:] ]
+        return ''.join( str(func) for func in FuncNode.create(text) )
 
     @classmethod
     def split_fields(cls, text: str, key: str) -> list:
@@ -143,8 +214,8 @@ class DQL_Object:
         if key == SELECT:
             if cls.contains_CASE_statement(text):
                 return Case.parse(text)
-            if '(' in text:
-                return cls.split_functions(text)        
+            # if '(' in text:
+            #     return cls.split_functions(text)        
         separator = cls.get_separator(key)
         return re.split(separator, text)
 

@@ -61,13 +61,17 @@ def create_nested_functions() -> Select:
     )
     return cte
 
+SCRIPT_FUNCTIONS = '''SELECT SubString(Cast(log.event_date As char), 1, 10) as day
+            , Min(log.event_date) as departure, log.resident, Max(log.event_date) as arrival
+            FROM Log log GROUP BY day, resident
+'''
+
+
 def compare_nested_func_text(obj: Select) -> bool:
     txt1 = re.sub(r'\s+', ' ', str(obj) ).lower()
-    txt2 = re.sub(r'\s+', ' ', """
+    txt2 = re.sub(r'\s+', ' ', f"""
         WITH Traffic AS (
-            SELECT SubString(Cast(log.event_date As char), 1, 10) as day
-            , Min(log.event_date) as departure, Max(log.event_date) as arrival
-            , log.resident FROM Log log GROUP BY day, resident
+            {SCRIPT_FUNCTIONS}
         )SELECT
                 arrival - departure as time,
                 Lag(time) OVER(
@@ -92,3 +96,10 @@ def compare_auto_convert_text(obj: Select) -> bool:
     txt1 = obj.values[SELECT][-1].lower()
     txt2 = "Round(Cast(Current_Date() - p.birth As FLOAT)) as age".lower()
     return SequenceMatcher(None, txt1, txt2).ratio() > 0.66
+
+def function_list() -> list:
+    result = set()
+    def all_functions(node: FuncNode):
+        result.add(node.func_name)
+    FuncNode.create(SCRIPT_FUNCTIONS, all_functions)
+    return result

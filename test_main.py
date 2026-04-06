@@ -32,7 +32,7 @@ from tests.others import (
 )
 from tests.functions import (
     diff_over_sum, function_fields,
-    DateDiff_function_variants,
+    DateDiff_function_variants, function_list,
     create_nested_functions, compare_nested_func_text,
     create_auto_convert_function, compare_auto_convert_text
 )
@@ -327,3 +327,6 @@ def test_auto_complete():
 def test_range_and_if():
     assert range_and_if_found() == {'age': True, 'gender': True}
 
+def test_function_list():
+    expected = {'Cast', 'Min', 'SubString', 'Max'}
+    assert function_list() == expected
