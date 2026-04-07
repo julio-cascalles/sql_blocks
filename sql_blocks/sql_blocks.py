@@ -1978,7 +1978,10 @@ class PandasLanguage(DataAnalysisLanguage):
                 )
                 continue
             field, op, *const = self.split_condition_elements(expr)
-            if op.upper() == 'LIKE' and len(const) > 2:
+            if ' '.join([op] + const).lower() == 'is null':
+                op = '.isnull()'
+                const = ''
+            elif op.upper() == 'LIKE' and len(const) > 2:
                 level = 0
                 if wildcard(const[:len(const)-2]):
                     level += 2
@@ -3939,8 +3942,5 @@ class Delete(DML_Object):
 
 
 if __name__ == "__main__":
-    query = Select(
-        'Emprestimo e',
-        taxa=If('atraso', gt(0), Sum)
-    )
-    print(query)
+    query = detect('SELECT * FROM table WHERE col IS NULL')
+    print( query.translate_to(PandasLanguage) )
