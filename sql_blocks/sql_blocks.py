@@ -43,6 +43,7 @@ class FuncNode:
         self.pendent: bool = True
         self.field: str  = ''
         self.suffix: str = ''
+        self.extra = None
 
     def get_suffix(self, open: int=0):
         if open:
@@ -57,12 +58,13 @@ class FuncNode:
         open = self.open
         if self.parent:
             self.parent.open = close + 1
-        for param in self.text[open:close-1].split(','):
+        separator = r'\bAS\b' if self.func_name.upper() == 'CAST' else '[,]'
+        for param in re.split(separator, self.text[open:close-1]):
             param = param.strip()
             if not param:
                 continue
             *alias, field = param.split('.')
-            if field.isidentifier():
+            if not self.field and field.isidentifier():
                 self.field = param
             self.params.append(param)
         self.pendent = False
@@ -102,7 +104,7 @@ class FuncNode:
                 last_node = curr_node
                 curr_node = cls( func_name, found.end() )
                 if callback:
-                    callback(curr_node)
+                    curr_node.extra = callback(curr_node)
                 if last_node and last_node.pendent:
                     curr_node.parent = last_node
                     target = last_node.params
@@ -461,7 +463,9 @@ class Function(Code):
     
     @classmethod
     def match(cls, func_name: str, filter: Dialect=None) -> bool:
-        for dialect, name in cls.alternative_names().items():
+        source: dict = cls.alternative_names()
+        source |= {filter: cls.name()}
+        for dialect, name in source.items():
             if filter and filter != dialect:
                 continue
             if func_name.lower() == name.lower():
@@ -588,6 +592,14 @@ class SubString(Function):
             Dialect.ORACLE: 'Substr',
             Dialect.MYSQL: 'Substr'
         }
+
+
+class Trim(Function):
+    """
+    Removes space character from the start or end of a string
+    """
+    inputs = [CHAR]
+    output = CHAR
 
 
 class Re(Function):
@@ -791,6 +803,28 @@ class Count(Aggregate, Function):
     Return the number of rows that matches a specified criterion.
     """
     ...
+
+class StdDev(Aggregate, Function):
+    """
+    Calculates the sample standard deviator of values
+    """
+    ...
+
+
+# class Percentile_Cont(Aggregate, Function):
+class Percentile_Cont(Function):
+    """
+    Returns a percentile (or median) value of values
+    """
+    inputs = [FLOAT]
+    output = FLOAT
+
+    @classmethod
+    def alternative_names(cls) -> dict:
+        return {
+            Dialect.ORACLE: 'Median'
+        }
+
 
 # ---- Window Functions: -----------------------------------
 class Row_Number(Window, Function):
@@ -1598,7 +1632,7 @@ class QueryLanguage:
             text, value = text.split(':', maxsplit=1)
             sep = ':'
         return '{}{}{}'.format(
-            ''.join(re.split(r'\w+[.]', text)),
+            ''.join(re.split(r'[A-Za-z]+[.]', text)),
             sep, value.replace("'", '"')
         )
 
@@ -1912,17 +1946,38 @@ class PandasLanguage(DataAnalysisLanguage):
     LIB_INITIALIZATION = ''
     FIELD_LIST_FMT = '[[{}{}]]'
     PREFIX_LIBRARY = 'pd.'
+    PANDAS_FUNCTIONS = {
+        Coalesce:        "df['{}'].fillna({})",
+        Cast:            "df['{}'].astype({})",
+        Trim:            "df['{}'].str.strip()",
+        Percentile_Cont: "df['{}'].quantile({})",
+    }
 
     def add_field(self, values: list) -> str:
         def line_field_fmt(field: str) -> str:
-            return "{}'{}'".format(
-                self.TABULATION, field
+            return "{tab}{quote}{field}{quote}".format(
+                tab=self.TABULATION, field=field,
+                quote='' if '(' in field else "'"
             )
+        def node2pandas_func(node: FuncNode) -> str:
+            class_type: Function = None
+            for class_type, pattern in self.PANDAS_FUNCTIONS.items():
+                if class_type.match(node.func_name):
+                    param = node.params[-1] if node.params else ''
+                    return pattern.format(
+                        node.field, param.lower()
+                    )
+            return ''
+        # -------------------------------------------------------
         common_fields = self.split_agg_fields(values)
+        if '(' in common_fields[0]:
+            FuncNode.create(','.join(common_fields))
+            common_fields = [node2pandas_func(node) for node in FuncNode.stack]
         if common_fields:
             return self.FIELD_LIST_FMT.format(
-                ','.join(line_field_fmt(fld) for fld in common_fields),
-                self.LINE_BREAK
+                ','.join(
+                    line_field_fmt(fld) for fld in common_fields
+                ), self.LINE_BREAK
             )
         return ''
 
@@ -3942,5 +3997,9 @@ class Delete(DML_Object):
 
 
 if __name__ == "__main__":
-    query = detect('SELECT * FROM table WHERE col IS NULL')
+    query = detect('''
+        SELECT COALESCE(col1, 0), Trim(col2),
+        cast(col3 AS INT), percentile_Cont(col4, 0.75)
+        FROM table
+    ''')
     print( query.translate_to(PandasLanguage) )
