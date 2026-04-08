@@ -873,7 +873,7 @@ class Cast(Function):
     """
     Converts a value (of any type) into a specified datatype.
     """
-    inputs = [ANY]
+    inputs = [ANY, ANY]
     output = ANY
     separator = ' As '
 
@@ -3997,9 +3997,11 @@ class Delete(DML_Object):
 
 
 if __name__ == "__main__":
-    query = detect('''
-        SELECT COALESCE(col1, 0), Trim(col2),
-        cast(col3 AS INT), percentile_Cont(col4, 0.75)
-        FROM table
-    ''')
-    print( query.translate_to(PandasLanguage) )
+    # query = detect('''
+    #     SELECT COALESCE(col1, 0), Trim(col2),
+    #     cast(col3 AS INT), percentile_Cont(col4, 0.75)
+    #     FROM table
+    # ''')
+    # print( query.translate_to(PandasLanguage) )
+    query = Select('table', column=Cast('int'))
+    print(query)
