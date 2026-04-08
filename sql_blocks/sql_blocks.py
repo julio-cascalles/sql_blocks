@@ -512,12 +512,7 @@ class Function(Code, Condition):
 
     @classmethod
     def new_condition(cls, operator: str, value):
-        function = cls(value)
-        return Where(f"{operator} {function}")
-
-    def add_condition(self, name: str, main: DQL_Object):
-        self.field_class = eq(self.params[0])
-        self.add(name, main)
+        return Where( f"{operator} {value}", function=cls() )
 
     @classmethod
     def name(cls) -> str:
@@ -780,10 +775,6 @@ class Year(DatePart):
     def alternative_names(cls) -> dict:
         return {}
 
-    def add_condition(self, name: str, main: DQL_Object):
-        value = self.params[0]
-        Between(f'{value}-01-01', f'{value}-12-31').add(name, main)
-
 
 class Month(DatePart):
     @classmethod
@@ -918,6 +909,22 @@ class Lag(Window, Function):
     preceding row within the same result set.
     """
     output = ANY
+    PATTERNS = [
+        r'(\w+)\s*[-]\*(\w+)',
+        r'(\w+)\s*[-]\*(\w+)\s*[/]\s*(\w+)',
+    ]
+
+    def __init__(self, formula: str=''):
+        self.formula = formula
+        var = ['', '']
+        for pattern in self.PATTERNS:
+            found = re.findall(pattern, formula)
+            if not found:
+                continue
+            var = set( found[0] )
+        self.curr, self.prev = var
+        super().__init__()
+
 
 
 class Lead(Window, Function):
@@ -1091,9 +1098,10 @@ def quoted(value) -> str:
 class Where(Condition):
     prefix = ''
 
-    def __init__(self, content: str):
+    def __init__(self, content: str, function: Function=None):
         self.content = content
         self.owner = None
+        self.function = function
 
     @classmethod
     def new_condition(cls, operator: str, value):
@@ -1137,7 +1145,7 @@ class Where(Condition):
             main.values.setdefault(WHERE, []).append(expr)
 
     @classmethod
-    def format(cls, name: str, main) -> str:
+    def format(cls, name: str, main, pattern = '{pfx}{fld} {expr}') -> str:
         content = ''
         if isinstance(main, Where):
             content = main.content
@@ -1150,8 +1158,8 @@ class Where(Condition):
             name = name.replace(
                 field, schema.most_similar(field, main.table_name)
             )
-        return '{}{} {}'.format(
-            cls.prefix, name, content
+        return pattern.format(
+            pfx=cls.prefix, fld=name, expr=content
         )
         # -----------------------------
 
@@ -1163,7 +1171,11 @@ class Where(Condition):
             name = Field.format(name, main)
         self.owner = main
         cls = self.__class__
-        main.values.setdefault(WHERE, []).append(cls.format(name, self))
+        if self.function:
+            result = cls.format(name, self, '{pfx}'+self.function.name()+'({fld}) {expr}')
+        else:
+            result = cls.format(name, self)
+        main.values.setdefault(WHERE, []).append(result)
 
 
 WHERE_METHODS = (
@@ -1380,10 +1392,13 @@ class Between:
         self.start = start
         self.end = end
 
-    def literal(self) -> Where:
+    def literal(self, function: Function=None) -> Where:
         return Where('BETWEEN {} AND {}'.format(
             quoted(self.start), quoted(self.end),
-        ))
+        ), function=function)
+
+    def options(self) -> Options:
+        Options()
 
     def add(self, name: str, main:DQL_Object):
         if self.is_literal:
@@ -2573,7 +2588,8 @@ class CypherParser(Parser):
             field = schema.most_similar(field, query.table_name)            
         if functions:
             func_class: Function = self.get_func_class(functions[0])
-            func_class(condition[-1]).add_condition(field, query)
+            # func_class(condition[-1]).add_condition(field, query)
+            func_class().eq(condition[-1]).add(field, query)
             return
         Where(' '.join(condition)).add(field, query)
     
@@ -3627,7 +3643,7 @@ class RuleDateFuncReplace(Rule):
                 continue
             func, field, *rest, const = tokens
             temp = Select(f'{target.table_name} {target.alias}')
-            Year(const).add_condition(field, temp)
+            Between(f'{const}-01-01', f'{const}-12-31').add(field, temp)
             target.values[WHERE][i] = ' AND '.join(temp.values[WHERE])
 
 
@@ -4044,21 +4060,31 @@ class Delete(DML_Object):
 
 
 if __name__ == "__main__":
-    DQL_Object.USE_CATALOG = True
-    DQL_Object.ALIAS_FUNC = lambda t: t[0].lower()
-    query = detect('Aluno(nome, id) <- Nota(aluno_id, curso_id) -> Curso(id, nome)')
+    # DQL_Object.USE_CATALOG = True
+    # DQL_Object.ALIAS_FUNC = lambda t: t[0].lower()
     # query = Select(
-    #     'Sales', 
-    #     product_code=Cast('int'),
-    #     ref_date=Year.eq(2023),
-    #     value=Lag().over(
-    #         customer_id=Partition,
-    #         ref_date=OrderBy
-    #     ).As('last_value')
+    #     Investimento=Table('cliente, valor, dt_ref'),
+    #     valor=Lag().over(
+    #         dt_ref=OrderBy,
+    #         cliente=Partition,
+    #     ).As('anterior'),
+    #     anterior=ExpressionField('(valor - %) / %  AS rendimento'),
+    #     rendimento=Lag('(valor-anterior)/anterior')
     # )
+    query = Select(
+        'Sales', 
+        product_code=Cast('int'),
+        # ref_date=Year.eq(2023),
+        ref_date=Year().As('ref_year', Where.eq(2023)),
+        value=Lag().over(
+            customer_id=Partition,
+            ref_date=OrderBy
+        ).As('last_value')
+    )
     print('▓'*50)
+    # query = detect('Aluno(nome, id) <- Nota(aluno_id, curso_id) -> Curso(id, nome)')
     print(query)
     print('░'*50)
-    query.rename_similar_fields()
-    print(query)
+    # query.rename_similar_fields()
+    print(query.optimize())
     print('▓'*50)
