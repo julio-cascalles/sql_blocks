@@ -838,8 +838,11 @@ class Aggregate(Frame):
     inputs = [FLOAT]
     output = FLOAT
 
+
 class Window(Frame):
     inputs = [...]
+    slice_filter = slice(-1, None, None)
+
 
 # ---- Aggregate Functions: -------------------------------
 class Avg(Aggregate, Function):
@@ -848,18 +851,22 @@ class Avg(Aggregate, Function):
     set of numeric values within a specified column
     """
     ...
+
 class Min(Aggregate, Function):
     """
     Returns the smallest value of the selected column.
     """
     ...
+
 class Max(Aggregate, Function):
     """
     Returns the largest value of the selected column.
     """
     ...
+
 class Sum(Aggregate, Function):
     ...
+
 class Count(Aggregate, Function):
     """
     Return the number of rows that matches a specified criterion.
@@ -895,7 +902,7 @@ class Row_Number(Window, Function):
     within a partition of a result set.
     """
     output = INT
-    slice_filter = slice(-1, None, None)
+
 
 class Rank(Window, Function):
     """
@@ -903,7 +910,7 @@ class Rank(Window, Function):
     set, based on a specified ordering of data.
     """
     output = INT
-    slice_filter = slice(-1, None, None)
+
 
 class Lag(Window, Function):
     """
@@ -911,7 +918,7 @@ class Lag(Window, Function):
     preceding row within the same result set.
     """
     output = ANY
-    slice_filter = slice(-1, None, None)
+
 
 class Lead(Window, Function):
     """
@@ -919,7 +926,6 @@ class Lead(Window, Function):
     subsequent row within the same result set.
     """
     output = ANY
-    slice_filter = slice(-1, None, None)
 
 
 # ---- Conversions and other Functions: ---------------------
@@ -1116,7 +1122,7 @@ class Where(Condition):
         query = self.content
         main.values[FROM].append(f',{query.table_name} {query.alias}')
         for key in USUAL_KEYS:
-            main.update_values(key, query.values.get(key, []))
+            main.update_values(key, query)
         if not self.pairs:
             if not query.key_field:
                 return
@@ -2898,7 +2904,37 @@ class Select(DQL_Object):
         self.__call__(**values)
         self.break_lines = True
 
-    def update_values(self, key: str, new_values: list):
+    def rename_similar_fields(self):
+        if not self.USE_CATALOG:
+            raise ValueError('''
+                To use this feature, you must 
+                set USE_CATALOG to True before
+                create the query object.
+            ''')
+        # --------------------------------------------------------------------------
+        def field_alias(fld: str) -> tuple:
+            found = re.findall(r'((\w+)[.])*(\w+)$', fld)
+            if found:
+                return found[0][1:]
+            return '', fld
+        # --------------------------------------------------------------------------
+        for i, f1 in enumerate(self.values.get(SELECT, [])):
+            a1, f1 = field_alias(f1)
+            for j, f2 in enumerate(self.values.get(SELECT, [])):
+                a2, f2 = field_alias(f2)
+                equal_fields: bool = all([
+                    a1 not in ('', a2), a2 != '',
+                    f1.upper() == f2.upper()
+                ])
+                if not equal_fields:
+                    continue
+                t1 = DQL_Object.catalog[a1][0].lower()
+                t2 = DQL_Object.catalog[a2][0].lower()
+                self.values[SELECT][i] = f'{a1}.{f1} AS {f1}_{t1}'
+                self.values[SELECT][j] = f'{a2}.{f2} AS {f2}_{t2}'
+
+    def update_values(self, key: str, target: DQL_Object):
+        new_values = target.values.get(key, [])
         for value in self.diff(key, new_values):
             self.values.setdefault(key, []).append(value)
 
@@ -2921,7 +2957,7 @@ class Select(DQL_Object):
             new_tables.append(row)
         main.values[FROM] = old_tables[:1] + new_tables + old_tables[1:]
         for key in USUAL_KEYS:
-            main.update_values(key, self.values.get(key, []))
+            main.update_values(key, self)
 
     def copy(self) -> DQL_Object:
         from copy import deepcopy
@@ -2934,7 +2970,7 @@ class Select(DQL_Object):
         query = self.copy()
         if query.table_name.lower() == other.table_name.lower():
             for key in USUAL_KEYS:
-                query.update_values(key, other.values.get(key, []))
+                query.update_values(key, other)
             return query
         foreign_field, primary_key = ForeignKey.find(query, other)
         if not foreign_field:
@@ -3000,7 +3036,7 @@ class Select(DQL_Object):
                 for i, curr_cond in enumerate(conditions):
                     if '.' not in curr_cond:
                         conditions[i] = query.alias + '.' + curr_cond
-            query.update_values(key, other.values.get(key, []))
+            query.update_values(key, other)
         return query
 
     def limit(self, row_count: int=100, offset: int=0):
@@ -4008,9 +4044,21 @@ class Delete(DML_Object):
 
 
 if __name__ == "__main__":
-    query = Select(
-        'Sales', 
-        product_code=Cast('int'),
-        ref_date=Year.eq(2023)
-    )
+    DQL_Object.USE_CATALOG = True
+    DQL_Object.ALIAS_FUNC = lambda t: t[0].lower()
+    query = detect('Aluno(nome, id) <- Nota(aluno_id, curso_id) -> Curso(id, nome)')
+    # query = Select(
+    #     'Sales', 
+    #     product_code=Cast('int'),
+    #     ref_date=Year.eq(2023),
+    #     value=Lag().over(
+    #         customer_id=Partition,
+    #         ref_date=OrderBy
+    #     ).As('last_value')
+    # )
+    print('▓'*50)
     print(query)
+    print('░'*50)
+    query.rename_similar_fields()
+    print(query)
+    print('▓'*50)
