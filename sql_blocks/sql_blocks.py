@@ -422,7 +422,64 @@ class BigQueryLanguage(DialectLanguage):
     dialect = Dialect.BIGQUERY
 
 
-class Function(Code):
+class Position(Enum):
+    StartsWith = -1
+    Middle = 0
+    EndsWith = 1
+
+
+class Condition:
+    @classmethod
+    def new_condition(cls, operator: str, value):
+        raise NotImplementedError
+
+    @classmethod
+    def eq(cls, value):
+        return cls.new_condition('=', value)
+
+    @classmethod
+    def contains(cls, text: str, pos: int | Position = Position.Middle):
+        if isinstance(pos, int):
+            pos = Position(pos)
+        return cls.new_condition('LIKE',
+            "'{}{}{}'".format(
+                '%' if pos != Position.StartsWith else '',
+                text,
+                '%' if pos != Position.EndsWith else ''
+            )
+        )
+   
+    @classmethod
+    def gt(cls, value):
+        return cls.new_condition('>', value)
+
+    @classmethod
+    def gte(cls, value):
+        return cls.new_condition('>=', value)
+
+    @classmethod
+    def lt(cls, value):
+        return cls.new_condition('<', value)
+
+    @classmethod
+    def lte(cls, value):
+        return cls.new_condition('<=', value)
+    
+    @classmethod
+    def is_null(cls):
+        return cls('IS NULL')
+    
+    @classmethod
+    def inside(cls, values, keyword: str='IN'):
+        if isinstance(values, list):
+            values = ','.join(quoted(v) for v in values)
+        elif isinstance(values, Select):
+            query: Select = values
+            values = query.justify(30)
+        return cls(f'{keyword} ({values})')
+
+
+class Function(Code, Condition):
     dialect = Dialect.ANSI
     inputs = None
     output = None
@@ -452,6 +509,11 @@ class Function(Code):
         self.params = [set_func_types(p) for p in params if p is not None]
         self.pattern = self.get_pattern()
         super().__init__()
+
+    @classmethod
+    def new_condition(cls, operator: str, value):
+        function = cls(value)
+        return Where(f"{operator} {function}")
 
     def add_condition(self, name: str, main: DQL_Object):
         self.field_class = eq(self.params[0])
@@ -1020,13 +1082,7 @@ def quoted(value) -> str:
     return str(value)
 
 
-class Position(Enum):
-    StartsWith = -1
-    Middle = 0
-    EndsWith = 1
-
-
-class Where:
+class Where(Condition):
     prefix = ''
 
     def __init__(self, content: str):
@@ -1034,53 +1090,8 @@ class Where:
         self.owner = None
 
     @classmethod
-    def __constructor(cls, operator: str, value):
+    def new_condition(cls, operator: str, value):
         return cls(f'{operator} {quoted(value)}')
-
-    @classmethod
-    def eq(cls, value):
-        return cls.__constructor('=', value)
-
-    @classmethod
-    def contains(cls, text: str, pos: int | Position = Position.Middle):
-        if isinstance(pos, int):
-            pos = Position(pos)
-        return cls(
-            "LIKE '{}{}{}'".format(
-                '%' if pos != Position.StartsWith else '',
-                text,
-                '%' if pos != Position.EndsWith else ''
-            )
-        )
-   
-    @classmethod
-    def gt(cls, value):
-        return cls.__constructor('>', value)
-
-    @classmethod
-    def gte(cls, value):
-        return cls.__constructor('>=', value)
-
-    @classmethod
-    def lt(cls, value):
-        return cls.__constructor('<', value)
-
-    @classmethod
-    def lte(cls, value):
-        return cls.__constructor('<=', value)
-    
-    @classmethod
-    def is_null(cls):
-        return cls('IS NULL')
-    
-    @classmethod
-    def inside(cls, values, keyword: str='IN'):
-        if isinstance(values, list):
-            values = ','.join(quoted(v) for v in values)
-        elif isinstance(values, Select):
-            query: Select = values
-            values = query.justify(30)
-        return cls(f'{keyword} ({values})')
 
     @classmethod
     def formula(cls, formula: str):
@@ -3997,11 +4008,9 @@ class Delete(DML_Object):
 
 
 if __name__ == "__main__":
-    # query = detect('''
-    #     SELECT COALESCE(col1, 0), Trim(col2),
-    #     cast(col3 AS INT), percentile_Cont(col4, 0.75)
-    #     FROM table
-    # ''')
-    # print( query.translate_to(PandasLanguage) )
-    query = Select('table', column=Cast('int'))
+    query = Select(
+        'Sales', 
+        product_code=Cast('int'),
+        ref_date=Year.eq(2023)
+    )
     print(query)
