@@ -834,6 +834,45 @@ class Window(Frame):
     inputs = [...]
     slice_filter = slice(-1, None, None)
 
+    PATTERNS = [] # To be defined in the child classes.
+
+    def __init__(self, formula: str=''):
+        self.formula = formula
+        super().__init__()
+
+    @staticmethod
+    def sorted_vars(pattern: str, formula: str) -> list:
+        pattern = re.sub(r'\s+', '', pattern)
+        formula = re.sub(r'\s+', '', formula)
+        numbers = [int(num) for num in re.findall(r'\d+', pattern)]
+        for char in '(.+-*/,=)': # --- reserved chars
+            pattern = pattern.replace(char, f"[{char}]")
+        for i in range(1, 10):
+            pattern = pattern.replace('{'+str(i)+'}', r'(\w+)')
+        found = re.findall(pattern, formula)
+        if not found:
+            return None
+        names = found[0]    
+        if len(numbers) != len(names):
+            return None
+        map = {num: name for num, name in zip(numbers, names)}
+        return [map[i] for i in sorted(map)]
+
+    def find_patterns(self) -> tuple:
+        for pattern in self.PATTERNS:
+            var = self.sorted_vars(pattern, self.formula)
+            if var:
+                curr, prev, *rest  = var
+                return curr, prev
+        raise ValueError('The formula does not match to any known pattern.')
+
+    def format(self, name: str, main: DQL_Object) -> str:
+        if self.formula:
+            alias = name
+            name, other = self.find_patterns()
+            self.As(other, ExpressionField(f'{self.formula} AS {alias}'))
+        return super().format(name, main)
+
 
 # ---- Aggregate Functions: -------------------------------
 class Avg(Aggregate, Function):
@@ -910,21 +949,8 @@ class Lag(Window, Function):
     """
     output = ANY
     PATTERNS = [
-        r'(\w+)\s*[-]\*(\w+)',
-        r'(\w+)\s*[-]\*(\w+)\s*[/]\s*(\w+)',
+        '({1}-{2})/{2}',
     ]
-
-    def __init__(self, formula: str=''):
-        self.formula = formula
-        var = ['', '']
-        for pattern in self.PATTERNS:
-            found = re.findall(pattern, formula)
-            if not found:
-                continue
-            var = set( found[0] )
-        self.curr, self.prev = var
-        super().__init__()
-
 
 
 class Lead(Window, Function):
@@ -933,6 +959,9 @@ class Lead(Window, Function):
     subsequent row within the same result set.
     """
     output = ANY
+    PATTERNS = [
+        '({2}-{1})/{1}',
+    ]
 
 
 # ---- Conversions and other Functions: ---------------------
@@ -2948,6 +2977,7 @@ class Select(DQL_Object):
                 t2 = DQL_Object.catalog[a2][0].lower()
                 self.values[SELECT][i] = f'{a1}.{f1} AS {f1}_{t1}'
                 self.values[SELECT][j] = f'{a2}.{f2} AS {f2}_{t2}'
+        return self
 
     def update_values(self, key: str, target: DQL_Object):
         new_values = target.values.get(key, [])
@@ -4057,34 +4087,3 @@ class Delete(DML_Object):
             self.table, ' AND '.join(self.filter)
         )
 # ===========================================================================================//
-
-
-if __name__ == "__main__":
-    # DQL_Object.USE_CATALOG = True
-    # DQL_Object.ALIAS_FUNC = lambda t: t[0].lower()
-    # query = Select(
-    #     Investimento=Table('cliente, valor, dt_ref'),
-    #     valor=Lag().over(
-    #         dt_ref=OrderBy,
-    #         cliente=Partition,
-    #     ).As('anterior'),
-    #     anterior=ExpressionField('(valor - %) / %  AS rendimento'),
-    #     rendimento=Lag('(valor-anterior)/anterior')
-    # )
-    query = Select(
-        'Sales', 
-        product_code=Cast('int'),
-        # ref_date=Year.eq(2023),
-        ref_date=Year().As('ref_year', Where.eq(2023)),
-        value=Lag().over(
-            customer_id=Partition,
-            ref_date=OrderBy
-        ).As('last_value')
-    )
-    print('▓'*50)
-    # query = detect('Aluno(nome, id) <- Nota(aluno_id, curso_id) -> Curso(id, nome)')
-    print(query)
-    print('░'*50)
-    # query.rename_similar_fields()
-    print(query.optimize())
-    print('▓'*50)

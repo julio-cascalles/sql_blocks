@@ -762,6 +762,28 @@ SELECT
 FROM
         Enrollment e
 ```
+
+#### 14.1 - Passing a formula to the function
+Instead of ...
+```
+q1 = Select(
+    Investiment=Table(...),
+    curr_value=Lag().over(
+        ...
+    ).As('prev_value'),
+    prev_value=ExpressionField('(curr_value - %) / % AS variation'),
+)
+```
+...you may do this...
+```
+    q2 = Select(
+        Investiment=Table(...),
+        variation=Lag('(curr_value - prev_value) / prev_value').over(
+            ...
+        ),
+    )
+```
+
 ---
 ### 15 - The `As` method:
     query=Select(

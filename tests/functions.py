@@ -103,3 +103,21 @@ def function_list() -> list:
         result.add(node.func_name)
     FuncNode.create(SCRIPT_FUNCTIONS, all_functions)
     return result
+
+def window_func_with_formula() -> bool:
+    FORMULA = '(curr_value - prev_value) / prev_value'
+    FIELDS = 'customer, curr_value, ref_date'
+    OVER_PARAMS = dict(
+            ref_date=OrderBy,
+            customer=Partition,
+        )
+    q1 = Select(
+        Investiment=Table(FIELDS),
+        curr_value=Lag().over(**OVER_PARAMS).As('prev_value'),
+        _=ExpressionField(FORMULA+'  AS variation'),
+    )
+    q2 = Select(
+        Investiment=Table(FIELDS),
+        variation=Lag(FORMULA).over(**OVER_PARAMS),
+    )
+    return q1 == q2

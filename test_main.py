@@ -31,10 +31,10 @@ from tests.others import (
     is_sql_injection
 )
 from tests.functions import (
-    diff_over_sum, function_fields,
+    diff_over_sum, function_fields, window_func_with_formula,
     DateDiff_function_variants, function_list,
     create_nested_functions, compare_nested_func_text,
-    create_auto_convert_function, compare_auto_convert_text
+    create_auto_convert_function, compare_auto_convert_text,
 )
 from tests.cte import(
     basic_recursive_cte, compare_basic_recursive,
@@ -330,3 +330,6 @@ def test_range_and_if():
 def test_function_list():
     expected = {'Cast', 'Min', 'SubString', 'Max'}
     assert function_list() == expected
+
+def test_window_func_with_formula():
+    assert window_func_with_formula()
