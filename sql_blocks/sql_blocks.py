@@ -64,8 +64,12 @@ class FuncNode:
             if not param:
                 continue
             *alias, field = param.split('.')
+            field, *param = re.split(r'\bAS\b|\bas\b', param)
+            if param:
+                param = ''.join(param).strip()
+                field = field.strip()
             if not self.field and field.isidentifier():
-                self.field = param
+                self.field = field                
             self.params.append(param)
         self.pendent = False
         self.close = close
@@ -2024,7 +2028,7 @@ class PandasLanguage(DataAnalysisLanguage):
             class_type: Function = None
             for class_type, pattern in self.PANDAS_FUNCTIONS.items():
                 if class_type.match(node.func_name):
-                    param = node.params[-1] if node.params else ''
+                    param = str(node.params[-1]) if node.params else ''
                     return pattern.format(
                         node.field, param.lower()
                     )
@@ -4087,3 +4091,14 @@ class Delete(DML_Object):
             self.table, ' AND '.join(self.filter)
         )
 # ===========================================================================================//
+
+
+if __name__ == "__main__":
+    # query = detect('''
+    #     select coalesce( cast(trim(col3) as int), 0 ), xxx, yyy from table
+    # ''')
+    query = detect('''
+        select coalesce(col1, 0), cast(col2 as int), 
+        trim(col3), percentile_CONT(col4) FROM table
+    ''')
+    print( query.translate_to(PandasLanguage) )
