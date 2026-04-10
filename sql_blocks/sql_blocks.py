@@ -1631,6 +1631,8 @@ class GroupBy(Clause):
 
 
 class Compare:
+    on_sub_query: callable = None
+
     def __init__(self, function: Function, condition: Where, groupby: str=''):
         self.function = function
         self.condition = condition
@@ -1641,34 +1643,40 @@ class Compare:
             raise ValueError('Compare.condition must be of a Where method.')
         sub = SubSelect(f"{main.table_name} {main.increment_alias()}")
         self.function.add(name, sub)
+        if Compare.on_sub_query:
+            on_sub_query = Compare.on_sub_query
+            Compare.on_sub_query = None
+            on_sub_query(sub)
+            Compare.on_sub_query = on_sub_query
         condition: Where = self.condition(sub)
         condition.add(name, main)
         if self.groupby:
             field_class = Sum
-            GroupBy.add(name, main)
+            GroupBy.add(self.groupby, main)
+            Field.add(self.groupby, main)
         else:
             field_class = Field
         field_class.add(name, main)
     
     @classmethod
-    def avg(cls, condition: Where):
-        return cls(Avg, condition)
+    def avg(cls, condition: Where, groupby: str=''):
+        return cls(Avg, condition, groupby)
     
     @classmethod
-    def min(cls, condition: Where):
-        return cls(Min, condition)
+    def min(cls, condition: Where, groupby: str=''):
+        return cls(Min, condition, groupby)
     
     @classmethod
-    def max(cls, condition: Where):
-        return cls(Max, condition)
+    def max(cls, condition: Where, groupby: str=''):
+        return cls(Max, condition, groupby)
     
     @classmethod
-    def sum(cls, condition: Where):
-        return cls(Sum, condition)
+    def sum(cls, condition: Where, groupby: str=''):
+        return cls(Sum, condition, groupby)
     
     @classmethod
-    def count(cls, condition: Where):
-        return cls(Count, condition)
+    def count(cls, condition: Where, groupby: str=''):
+        return cls(Count, condition, groupby)
 
 
 class Having(Compare):
@@ -4107,9 +4115,26 @@ class Delete(DML_Object):
 # ===========================================================================================//
 
 
+def main():
+    # ------------------------------------------------------------------------------
+    def filter_year2025(query: Select):
+        query(ref_date=Year.eq(2025))
+    # ------------------------------------------------------------------------------
+    Compare.on_sub_query = filter_year2025
+    query = Select(
+        'Sales s', quantity=Compare.min( Where.lte, 'customer'),  # GROUP BY customer
+   )
+    print(query)
+    query.delete('quantity', [Where])
+    filter_year2025(query)
+    print('░'*50)
+    print(query)
+    query = Select(
+        'Employee e', salary=Compare.avg( Where.gt )
+    )
+    print('■'*50)
+    print(query)
+
+
 if __name__ == "__main__":
-    query = detect('''
-        select coalesce(col1, 0), cast(col2 as int), 
-        trim(col3), percentile_CONT(col4) FROM table
-    ''')
-    print( query.translate_to(PandasLanguage) )
+    main()
