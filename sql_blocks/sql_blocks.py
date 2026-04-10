@@ -280,12 +280,20 @@ class DQL_Object:
         return f"{name}{value+1}"
 
     def delete(self, search: str, keys: list=USUAL_KEYS, exact: bool=False):
+        KEYWORD_BY_TYPE = {
+            Select: SELECT,
+            Where: WHERE,
+            GroupBy: GROUP_BY,
+            OrderBy: ORDER_BY
+        }
         search = re.escape(search)
         if exact:
             not_match = lambda item: not re.search(fr'([^\w+]|[^_]){search}$', item)
         else:
             not_match = lambda item: search not in item
         for key in keys:
+            if key in KEYWORD_BY_TYPE:
+                key = KEYWORD_BY_TYPE[key]
             self.values[key] = [
                 item for item in self.values.get(key, [])
                 if not_match(item)
@@ -1623,9 +1631,10 @@ class GroupBy(Clause):
 
 
 class Compare:
-    def __init__(self, function: Function, condition: Where):
+    def __init__(self, function: Function, condition: Where, groupby: str=''):
         self.function = function
         self.condition = condition
+        self.groupby = groupby
 
     def add(self, name: str, main:DQL_Object):
         if self.condition not in WHERE_METHODS:
@@ -1634,7 +1643,12 @@ class Compare:
         self.function.add(name, sub)
         condition: Where = self.condition(sub)
         condition.add(name, main)
-        Field.add(name, main)
+        if self.groupby:
+            field_class = Sum
+            GroupBy.add(name, main)
+        else:
+            field_class = Field
+        field_class.add(name, main)
     
     @classmethod
     def avg(cls, condition: Where):
@@ -4094,9 +4108,6 @@ class Delete(DML_Object):
 
 
 if __name__ == "__main__":
-    # query = detect('''
-    #     select coalesce( cast(trim(col3) as int), 0 ), xxx, yyy from table
-    # ''')
     query = detect('''
         select coalesce(col1, 0), cast(col2 as int), 
         trim(col3), percentile_CONT(col4) FROM table
