@@ -2158,7 +2158,8 @@ class PandasLanguage(DataAnalysisLanguage):
             return ''
         if len(values) == 1 and ' ' in values[0]:
             values = values[0].split()
-        if OrderBy.sort == SortType.DESC:
+        last_item = values[-1].strip().upper()
+        if last_item != 'DESC' and OrderBy.sort == SortType.DESC:
             values.append(SortType.DESC.value)
         ascending = OrderBy.ascending(values[-1])
         if not ascending:
@@ -4114,28 +4115,3 @@ class Delete(DML_Object):
             self.table, ' AND '.join(self.filter)
         )
 # ===========================================================================================//
-
-
-def main():
-    # ------------------------------------------------------------------------------
-    def filter_year2025(query: Select):
-        query(ref_date=Year.eq(2025))
-    # ------------------------------------------------------------------------------
-    # Compare.on_sub_query = filter_year2025
-    query = Select(
-        'Sales s', #quantity=Compare.min( Where.lte, 'customer'),  # GROUP BY customer
-   )
-    print(query)
-    # query.delete('quantity', [Where])
-    filter_year2025(query)
-    print('░'*50)
-    print(query.optimize().translate_to(PandasLanguage))
-    # query = Select(
-    #     'Employee e', salary=Compare.avg( Where.gt )
-    # )
-    # print('■'*50)
-    # print(query)
-
-
-if __name__ == "__main__":
-    main()
