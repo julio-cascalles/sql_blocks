@@ -3763,11 +3763,26 @@ def join_queries(query_list: list) -> Select:
         result += query
     return result
 
-def detect(text: str, join_method = join_queries, format: str='') -> Select | list[Select]:
+def join_and_configure(query_list: list[Select]) -> Select:
+    result = join_queries(query_list)
+    result.break_lines = True
+    result.delete('id', [Select])
+    result.rename_similar_fields()
+    return result
+
+def detect(text: str, **args) -> Select | list[Select]:
     from collections import Counter
     parser = parser_class(text)
     if not parser:
         raise SyntaxError('Unknown parser class')
+    auto_config = args.get('auto_config')
+    if auto_config:
+        DQL_Object.USE_CATALOG = True
+        DQL_Object.ALIAS_FUNC = lambda t: t[0].lower()
+        join_method=join_and_configure
+    else:
+        join_method = args.get('join_method', join_queries)
+    # -----------------------------------------------------------------------------------
     if parser == CypherParser:
         for table, count in Counter( re.findall(r'(\w+)[(]', text) ).most_common():
             if count < 2:
@@ -3779,6 +3794,8 @@ def detect(text: str, join_method = join_queries, format: str='') -> Select | li
                 text = text[:begin] + new_name + '(' + text[end:]
                 count -= 1
     result = Select.parse(text, parser)
+    # -----------------------------------------------------------------------------------
+    format: str = args.get('format')
     if format:
         for query in result:
             query.set_file_format(format)
@@ -4115,3 +4132,10 @@ class Delete(DML_Object):
             self.table, ' AND '.join(self.filter)
         )
 # ===========================================================================================//
+
+
+if __name__ == "__main__":
+    query = detect('''
+      Student(name, id) <- Test(student, score, course) -> Course(id, name)
+    ''', auto_config=True)
+    print(query)
