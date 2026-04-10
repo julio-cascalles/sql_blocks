@@ -2112,6 +2112,7 @@ class PandasLanguage(DataAnalysisLanguage):
             2: '.str.endswith(',
             3: '.str.contains(',
         }
+        values = re.split(r'\s+and\s+|\s+AND\s+', ' AND '.join(values))
         for expr in values:
             found = re.findall(r'(.*)\s+OR\s+(.*)', expr, re.IGNORECASE)
             if found:
@@ -4120,20 +4121,20 @@ def main():
     def filter_year2025(query: Select):
         query(ref_date=Year.eq(2025))
     # ------------------------------------------------------------------------------
-    Compare.on_sub_query = filter_year2025
+    # Compare.on_sub_query = filter_year2025
     query = Select(
-        'Sales s', quantity=Compare.min( Where.lte, 'customer'),  # GROUP BY customer
+        'Sales s', #quantity=Compare.min( Where.lte, 'customer'),  # GROUP BY customer
    )
     print(query)
-    query.delete('quantity', [Where])
+    # query.delete('quantity', [Where])
     filter_year2025(query)
     print('░'*50)
-    print(query)
-    query = Select(
-        'Employee e', salary=Compare.avg( Where.gt )
-    )
-    print('■'*50)
-    print(query)
+    print(query.optimize().translate_to(PandasLanguage))
+    # query = Select(
+    #     'Employee e', salary=Compare.avg( Where.gt )
+    # )
+    # print('■'*50)
+    # print(query)
 
 
 if __name__ == "__main__":
