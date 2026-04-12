@@ -88,5 +88,5 @@ def replace_join_by_subselect() -> list:
     query.optimize([RuleReplaceJoinBySubselect])
     return [
         re.sub(r'\s+', ' ', condition)
-        for condition in query.values.get(WHERE, [])
+        for condition in query.values.get(CMD_WHERE, [])
     ]

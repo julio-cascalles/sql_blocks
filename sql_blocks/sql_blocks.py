@@ -20,8 +20,8 @@ KEYWORD = {
 #                  |
 #                  +-------- separator
 
-SELECT, FROM, WHERE, GROUP_BY, ORDER_BY, LIMIT = KEYWORD.keys()
-USUAL_KEYS = [SELECT, WHERE, GROUP_BY, ORDER_BY, LIMIT]
+CMD_SELECT, CMD_FROM, CMD_WHERE, CMD_GROUP_BY, CMD_ORDER_BY, CMD_LIMIT = KEYWORD.keys()
+USUAL_KEYS = [CMD_SELECT, CMD_WHERE, CMD_GROUP_BY, CMD_ORDER_BY, CMD_LIMIT]
 TO_LIST = lambda x: x if isinstance(x, list) else [] if x is None else [x]
 
 
@@ -182,16 +182,16 @@ class DQL_Object:
             return
         alias, table_name = self.split_alias(table_name)
         self.__alias = self.get_from_catalog(table_name, alias) if self.USE_CATALOG else alias
-        self.values.setdefault(FROM, []).append(f'{table_name} {self.alias}')
+        self.values.setdefault(CMD_FROM, []).append(f'{table_name} {self.alias}')
 
     @property
     def table_name(self) -> str:
-        return self.values[FROM][0].split()[0]
+        return self.values[CMD_FROM][0].split()[0]
     
     def set_file_format(self, pattern: str):
         if '{' not in pattern:
             pattern = '{}' + pattern
-        self.values[FROM][0] = pattern.format(self.aka())
+        self.values[CMD_FROM][0] = pattern.format(self.aka())
 
     @property
     def alias(self) -> str:
@@ -201,9 +201,9 @@ class DQL_Object:
  
     @staticmethod
     def get_separator(key: str) -> str:
-        if key == WHERE:
+        if key == CMD_WHERE:
             return r'\s+and\s+|\s+AND\s+'
-        appendix = {FROM: r'\s+join\s+|\s+JOIN\s+'}
+        appendix = {CMD_FROM: r'\s+join\s+|\s+JOIN\s+'}
         return KEYWORD[key][0].format(appendix.get(key, ''))
 
     @staticmethod
@@ -217,7 +217,7 @@ class DQL_Object:
     @classmethod
     def split_fields(cls, text: str, key: str) -> list:
         text = re.sub(r'\s+', ' ', text)
-        if key == SELECT:
+        if key == CMD_SELECT:
             if cls.contains_CASE_statement(text):
                 return Case.parse(text)
             # if '(' in text:
@@ -232,7 +232,7 @@ class DQL_Object:
     def has_named_field(self, name: str) -> bool:
         return any(
             self.is_named_field(fld, name)
-            for fld in self.values.get(SELECT, [])
+            for fld in self.values.get(CMD_SELECT, [])
         )
 
     def diff(self, key: str, search_list: list, exact: bool=False) -> set:
@@ -256,7 +256,7 @@ class DQL_Object:
             return set(
                 (
                     fld 
-                    if key == SELECT and self.is_named_field(fld, key) 
+                    if key == CMD_SELECT and self.is_named_field(fld, key) 
                     else
                     re.sub(pattern, '', cleanup(fld))
                 )
@@ -265,7 +265,7 @@ class DQL_Object:
             )       
         pattern = KEYWORD[key][1] 
         if exact:
-            if key == WHERE:
+            if key == CMD_WHERE:
                 pattern = r'["\']| '
             pattern += f'|{PATTERN_PREFIX}'
         s1 = field_set(search_list)
@@ -281,10 +281,10 @@ class DQL_Object:
 
     def delete(self, search: str, keys: list=USUAL_KEYS, exact: bool=False):
         KEYWORD_BY_TYPE = {
-            Select: SELECT,
-            Where: WHERE,
-            GroupBy: GROUP_BY,
-            OrderBy: ORDER_BY
+            Select: CMD_SELECT,
+            Where: CMD_WHERE,
+            GroupBy: CMD_GROUP_BY,
+            OrderBy: CMD_ORDER_BY
         }
         search = re.escape(search)
         if exact:
@@ -331,7 +331,7 @@ class Field:
 
     @classmethod
     def add(cls, name: str, main: DQL_Object):
-        main.values.setdefault(SELECT, []).append(
+        main.values.setdefault(CMD_SELECT, []).append(
             cls.format(name, main)
         )
 
@@ -350,7 +350,7 @@ class NamedField:
             if re.search(r'^[\'"].*', name):
                 return True
             return False
-        main.values.setdefault(SELECT, []).append(
+        main.values.setdefault(CMD_SELECT, []).append(
             '{} as {}'.format(
                 name if is_literal() 
                 else self.class_type.format(name, main),
@@ -1008,7 +1008,7 @@ class ExpressionField:
         self.expr = expr
 
     def add(self, name: str, main: DQL_Object):
-        main.values.setdefault(SELECT, []).append(self.format(name, main))
+        main.values.setdefault(CMD_SELECT, []).append(self.format(name, main))
 
     def format(self, name: str, main: DQL_Object) -> str:
         """
@@ -1156,7 +1156,7 @@ class Where(Condition):
 
     def add_expression(self, name: str, main: DQL_Object):
         self.content = self.content.format(name, main)
-        main.values.setdefault(WHERE, []).append('{} {}'.format(
+        main.values.setdefault(CMD_WHERE, []).append('{} {}'.format(
             self.prefix, self.content
         ))
 
@@ -1169,7 +1169,7 @@ class Where(Condition):
 
     def add_join(self, name: str, main: DQL_Object):
         query = self.content
-        main.values[FROM].append(f',{query.table_name} {query.alias}')
+        main.values[CMD_FROM].append(f',{query.table_name} {query.alias}')
         for key in USUAL_KEYS:
             main.update_values(key, query)
         if not self.pairs:
@@ -1183,7 +1183,7 @@ class Where(Condition):
                 expr = f'({a2}.{f2} = {f1})'
             else:
                 expr = f'({a2}.{f2} = {a1}.{f1})'
-            main.values.setdefault(WHERE, []).append(expr)
+            main.values.setdefault(CMD_WHERE, []).append(expr)
 
     @classmethod
     def format(cls, name: str, main, pattern = '{pfx}{fld} {expr}') -> str:
@@ -1216,7 +1216,7 @@ class Where(Condition):
             result = cls.format(name, self, '{pfx}'+self.function.name()+'({fld}) {expr}')
         else:
             result = cls.format(name, self)
-        main.values.setdefault(WHERE, []).append(result)
+        main.values.setdefault(CMD_WHERE, []).append(result)
 
 
 WHERE_METHODS = (
@@ -1274,18 +1274,19 @@ class Case:
             return s if no_alias else Field.format(s, main)
         TABULATION = '    ' * (self.level+2) if self.break_lines else ' '
         LINE_BREAK = '\n' if self.break_lines else ' '
+        MARGIN = '    ' if self.break_lines else ' '
         default = self.default
         body = ''
         if not field:
             field = self.field
         for res, cond in self.__conditions.items():
-            body += '{brk}{tab}    WHEN {fld} {cond} THEN {alias}'.format(
-                    tab=TABULATION, fld=put_alias(field),
+            body += '{brk}{tab}{margin}WHEN {fld} {cond} THEN {alias}'.format(
+                    tab=TABULATION, fld=put_alias(field), margin=MARGIN,
                     brk=LINE_BREAK, alias=put_alias(res), cond=cond.content
                 )           
         return '{pfx}CASE{body}{df}{brk}{tab}END{alias}'.format(
             brk=LINE_BREAK, body=body, alias=f' AS {name}' if name else '', tab=TABULATION,
-            df=f'{LINE_BREAK}{TABULATION}ELSE {default}' if not default is None else '',
+            df=f'{LINE_BREAK}{TABULATION}{MARGIN}ELSE{default}' if not default is None else '',
             pfx=LINE_BREAK+TABULATION if self.level else ''
         )
     
@@ -1293,7 +1294,7 @@ class Case:
         return self.format('', None, self.field)
 
     def add(self, name: str, main: DQL_Object):
-        main.values.setdefault(SELECT, []).append(
+        main.values.setdefault(CMD_SELECT, []).append(
             self.format(
                 name, main, Field.format(self.field, main)
             )
@@ -1419,8 +1420,8 @@ class Options:
         child: Where
         for field, child in self.__children.items():
             child.add(field, temp)
-        main.values.setdefault(WHERE, []).append(
-            '(' + f'\n\t{logical_separator} '.join(temp.values[WHERE]) + ')'
+        main.values.setdefault(CMD_WHERE, []).append(
+            '(' + f'\n\t{logical_separator} '.join(temp.values[CMD_WHERE]) + ')'
         )
 
 
@@ -1491,7 +1492,7 @@ class Clause:
     @classmethod
     def format(cls, name: str, main: DQL_Object) -> str:
         def is_function() -> bool:
-            diff = main.diff(SELECT, [name.lower()], True)
+            diff = main.diff(CMD_SELECT, [name.lower()], True)
             return diff.intersection(FUNCTION_CLASS)
         schema: Schema = Parser.public_schema
         if schema:
@@ -1541,11 +1542,11 @@ class DescOrderBy:
     @classmethod
     def add(cls, name: str, main: DQL_Object):
         name = Clause.format(name, main)
-        main.values.setdefault(ORDER_BY, []).append(name + SortType.DESC.value)
+        main.values.setdefault(CMD_ORDER_BY, []).append(name + SortType.DESC.value)
 
     @classmethod
     def cls_to_str(cls, field: str='') -> str:
-        return f"{ORDER_BY} {field} DESC"
+        return f"{CMD_ORDER_BY} {field} DESC"
 
 
 class OrderBy(Clause):
@@ -1555,7 +1556,7 @@ class OrderBy(Clause):
     @classmethod
     def add(cls, name: str, main: DQL_Object):
         name = cls.format(name, main)
-        main.values.setdefault(ORDER_BY, []).append(name+cls.sort.value)
+        main.values.setdefault(CMD_ORDER_BY, []).append(name+cls.sort.value)
 
     @staticmethod
     def ascending(value: str) -> bool:
@@ -1574,7 +1575,7 @@ class OrderBy(Clause):
 
     @classmethod
     def cls_to_str(cls, field: str='') -> str:
-        return f"{ORDER_BY} {field}{cls.sort.value}"
+        return f"{CMD_ORDER_BY} {field}{cls.sort.value}"
 
 class Partition:
     params = None
@@ -1615,7 +1616,7 @@ class GroupBy(Clause):
                 obj.As(alias).add('', main)
             elif isinstance(obj, Select):
                 query: Select = obj
-                fields += query.values.get(SELECT, [])
+                fields += query.values.get(CMD_SELECT, [])
                 query.add(alias, main)
             elif obj == Field:
                 fields += [alias]
@@ -1623,7 +1624,7 @@ class GroupBy(Clause):
             fields += [self.format(name, main)]
         for field in fields:
             field = re.split(r'\s+(AS|as)\s+', field)[-1]
-            main.values.setdefault(GROUP_BY, []).append(field)
+            main.values.setdefault(CMD_GROUP_BY, []).append(field)
 
     @classmethod
     def add(cls, name: str, main: DQL_Object):
@@ -1681,7 +1682,7 @@ class Compare:
 
 class Having(Compare):
     def add(self, name: str, main:DQL_Object):
-        main.values[GROUP_BY][-1] += ' HAVING {} {}'.format(
+        main.values[CMD_GROUP_BY][-1] += ' HAVING {} {}'.format(
             self.function().format(name, main), self.condition.content
         )
 
@@ -1709,7 +1710,7 @@ class Rule:
 
 class QueryLanguage:
     pattern = '{select}{_from}{where}{group_by}{order_by}{limit}'
-    has_default = {key: bool(key == SELECT) for key in KEYWORD}
+    has_default = {key: bool(key == CMD_SELECT) for key in KEYWORD}
 
     @staticmethod
     def remove_alias(text: str) -> str:
@@ -1751,19 +1752,19 @@ class QueryLanguage:
         return self.join_with_tabs(values, ' ')
 
     def __init__(self, target: 'Select'):
-        self.KEYWORDS = [SELECT, FROM, WHERE, GROUP_BY, ORDER_BY, LIMIT]
+        self.KEYWORDS = [CMD_SELECT, CMD_FROM, CMD_WHERE, CMD_GROUP_BY, CMD_ORDER_BY, CMD_LIMIT]
         self.TABULATION = '\n\t' if target.break_lines else ' '
         self.LINE_BREAK = '\n' if target.break_lines else ' '
         self.TOKEN_METHODS = {
-            SELECT: self.add_field, FROM: self.get_tables, 
-            WHERE: self.extract_conditions, LIMIT: self.set_limit,
-            ORDER_BY: self.sort_by, GROUP_BY: self.set_group,
+            CMD_SELECT: self.add_field, CMD_FROM: self.get_tables, 
+            CMD_WHERE: self.extract_conditions, CMD_LIMIT: self.set_limit,
+            CMD_ORDER_BY: self.sort_by, CMD_GROUP_BY: self.set_group,
         }
         self.result = {}
         self.target = target
 
     def pair(self, key: str) -> str:
-        if key == FROM:
+        if key == CMD_FROM:
             return '_from'
         return key.lower().replace(' ', '_')
 
@@ -1778,7 +1779,7 @@ class QueryLanguage:
             if not method or (not values and not self.has_default[key]):
                 self.result[ref] = ''
                 continue
-            if key == FROM:
+            if key == CMD_FROM:
                 values[0] = '{} {}'.format(
                     self.target.aka(), self.target.alias
                 ).strip()
@@ -1873,7 +1874,7 @@ class MongoDBLanguage(QueryLanguage):
     def __init__(self, target: 'Select'):
         super().__init__(target)
         self.result['function'] = 'find'
-        self.KEYWORDS = [GROUP_BY, SELECT, FROM, WHERE, ORDER_BY]
+        self.KEYWORDS = [CMD_GROUP_BY, CMD_SELECT, CMD_FROM, CMD_WHERE, CMD_ORDER_BY]
 
     def prefix(self, key: str):
         return ''
@@ -1881,7 +1882,7 @@ class MongoDBLanguage(QueryLanguage):
 
 class Neo4JLanguage(QueryLanguage):
     pattern = 'MATCH {_from}{where}RETURN {select}{order_by}'
-    has_default = {WHERE: False, FROM: False, ORDER_BY: True, SELECT: True}
+    has_default = {CMD_WHERE: False, CMD_FROM: False, CMD_ORDER_BY: True, CMD_SELECT: True}
 
     def add_field(self, values: list) -> str:
         if values:
@@ -1933,7 +1934,7 @@ class Neo4JLanguage(QueryLanguage):
             equalities[alias] = f'{begin}{field}:{const}{end}'
         if len(equalities) == len(where_list):
             self.aliases.update(equalities)
-            self.has_default[WHERE] = True
+            self.has_default[CMD_WHERE] = True
             return self.LINE_BREAK
         return self.join_with_tabs(where_list, ' AND ') + self.LINE_BREAK
 
@@ -1943,12 +1944,12 @@ class Neo4JLanguage(QueryLanguage):
     def __init__(self, target: 'Select'):
         super().__init__(target)
         self.aliases = {}
-        self.KEYWORDS = [WHERE, FROM, ORDER_BY, SELECT]
+        self.KEYWORDS = [CMD_WHERE, CMD_FROM, CMD_ORDER_BY, CMD_SELECT]
 
     def prefix(self, key: str):
         default_prefix = any([
-            (key == WHERE and not self.has_default[WHERE]),
-            key == ORDER_BY
+            (key == CMD_WHERE and not self.has_default[CMD_WHERE]),
+            key == CMD_ORDER_BY
         ])
         if default_prefix:
             return super().prefix(key)
@@ -1988,7 +1989,7 @@ class DataAnalysisLanguage(QueryLanguage):
 
 class DatabricksLanguage(DataAnalysisLanguage):
     pattern = '{_from}{where}{group_by}{order_by}{select}{limit}'
-    has_default = {key: bool(key == SELECT) for key in KEYWORD}
+    has_default = {key: bool(key == CMD_SELECT) for key in KEYWORD}
 
     def add_field(self, values: list) -> str:
         return super().add_field(
@@ -2002,8 +2003,8 @@ class DatabricksLanguage(DataAnalysisLanguage):
             ) 
         return '{}{}{}{}{}'.format(
             self.LINE_BREAK,
-            '|> ' if key != FROM else '',
-            get_aggregate() if key == GROUP_BY else '',
+            '|> ' if key != CMD_FROM else '',
+            get_aggregate() if key == CMD_GROUP_BY else '',
             key, self.TABULATION
         )
 
@@ -2540,7 +2541,7 @@ class SQLParser(Parser):
             found = self.REGEX['subquery'].search(txt)
         tokens = [t.strip() for t in self.REGEX['keywords'].split(txt) if t.strip()]
         values = {k.upper(): v for k, v in zip(tokens[::2], tokens[1::2])}
-        tables = [t.strip() for t in self.REGEX['tbl_join'].split(values[FROM]) if t.strip()]
+        tables = [t.strip() for t in self.REGEX['tbl_join'].split(values[CMD_FROM]) if t.strip()]
         for curr_table_name in tables:
             if '=' in curr_table_name:
                 a1, f1, a2, f2 = [r.strip() for r in re.split('[().=]', curr_table_name) if r]
@@ -2550,7 +2551,7 @@ class SQLParser(Parser):
                     raise_table_not_found(a2)
                 obj1: Select = result[a1]
                 obj2: Select = result[a2]
-                join_direction =  self.REGEX['tbl_join'].findall(values[FROM])[0].upper()
+                join_direction =  self.REGEX['tbl_join'].findall(values[CMD_FROM])[0].upper()
                 if join_direction in ('LEFT', 'RIGHT'):
                     obj1.join_type = JoinType[join_direction]
                 PrimaryKey.add(f2, obj2)
@@ -2569,7 +2570,7 @@ class SQLParser(Parser):
                     if not key in values:
                         continue
                     cls = {
-                        ORDER_BY: OrderBy, GROUP_BY: GroupBy
+                        CMD_ORDER_BY: OrderBy, CMD_GROUP_BY: GroupBy
                     }.get(key, Where if key == 'WHERE' else Field)
                     obj.values[key] = [
                         cls.format(fld, obj)
@@ -2718,11 +2719,11 @@ class CypherParser(Parser):
         # ----------------------------------------------------
         def extract_field(query: Select, pos: int) -> str:
             fields = [
-                fld for fld in query.values[SELECT]
-                if fld not in query.values.get(GROUP_BY, [])
+                fld for fld in query.values[CMD_SELECT]
+                if fld not in query.values.get(CMD_GROUP_BY, [])
             ]
             result  = fields[pos].split('.')[-1]
-            query.delete(result, [SELECT], exact=True)
+            query.delete(result, [CMD_SELECT], exact=True)
             return result
         # ----------------------------------------------------
         curr: Select = self.queries[-1]
@@ -2737,7 +2738,7 @@ class CypherParser(Parser):
                 pk_field = found[i]
             elif last.key_field:
                 pk_field = last.key_field
-            elif not last.values.get(SELECT):
+            elif not last.values.get(CMD_SELECT):
                 raise IndexError(f'Primary Key not found for {last.table_name}.')
             else:
                 pk_field = extract_field(last, -1)
@@ -2750,7 +2751,7 @@ class CypherParser(Parser):
         else:
             if found[j]:
                 foreign_fld = found[j]
-            elif not curr.values.get(SELECT):
+            elif not curr.values.get(CMD_SELECT):
                 raise IndexError(f'Foreign Key not found for {curr.table_name}.')
             else:
                 foreign_fld = extract_field(curr, 0)
@@ -2991,9 +2992,9 @@ class Select(DQL_Object):
                 return found[0][1:]
             return '', fld
         # --------------------------------------------------------------------------
-        for i, f1 in enumerate(self.values.get(SELECT, [])):
+        for i, f1 in enumerate(self.values.get(CMD_SELECT, [])):
             a1, f1 = field_alias(f1)
-            for j, f2 in enumerate(self.values.get(SELECT, [])):
+            for j, f2 in enumerate(self.values.get(CMD_SELECT, [])):
                 a2, f2 = field_alias(f2)
                 equal_fields: bool = all([
                     a1 not in ('', a2), a2 != '',
@@ -3003,8 +3004,8 @@ class Select(DQL_Object):
                     continue
                 t1 = DQL_Object.catalog[a1][0].lower()
                 t2 = DQL_Object.catalog[a2][0].lower()
-                self.values[SELECT][i] = f'{a1}.{f1} AS {f1}_{t1}'
-                self.values[SELECT][j] = f'{a2}.{f2} AS {f2}_{t2}'
+                self.values[CMD_SELECT][i] = f'{a1}.{f1} AS {f1}_{t1}'
+                self.values[CMD_SELECT][j] = f'{a2}.{f2} AS {f2}_{t2}'
         return self
 
     def update_values(self, key: str, target: DQL_Object):
@@ -3017,9 +3018,9 @@ class Select(DQL_Object):
         return self.EQUIVALENT_NAMES.get(result, result)
 
     def add(self, name: str, main: DQL_Object):
-        old_tables = main.values.get(FROM, [])
-        if len(self.values[FROM]) > 1:
-            old_tables += self.values[FROM][1:]
+        old_tables = main.values.get(CMD_FROM, [])
+        if len(self.values[CMD_FROM]) > 1:
+            old_tables += self.values[CMD_FROM][1:]
         new_tables = []
         row = '{jt}JOIN {tb} {a2} ON ({a1}.{f1} = {a2}.{f2})'.format(
                 jt=self.join_type.value,
@@ -3029,7 +3030,7 @@ class Select(DQL_Object):
             )
         if row not in old_tables[1:]:
             new_tables.append(row)
-        main.values[FROM] = old_tables[:1] + new_tables + old_tables[1:]
+        main.values[CMD_FROM] = old_tables[:1] + new_tables + old_tables[1:]
         for key in USUAL_KEYS:
             main.update_values(key, self)
 
@@ -3105,7 +3106,7 @@ class Select(DQL_Object):
     def __mul__(self,other: DQL_Object) -> DQL_Object:
         query = self.copy()
         for key in USUAL_KEYS:
-            if key == WHERE:
+            if key == CMD_WHERE:
                 conditions = query.values[key]
                 for i, curr_cond in enumerate(conditions):
                     if '.' not in curr_cond:
@@ -3117,18 +3118,18 @@ class Select(DQL_Object):
         if Function.dialect == Dialect.BIGQUERY:
             return 'TableSample System (1 percent)'
         if Function.dialect == Dialect.SQL_SERVER:
-            fields = self.values.get(SELECT)
+            fields = self.values.get(CMD_SELECT)
             if fields:
                 fields[0] = f'SELECT TOP({row_count}) {fields[0]}'
             else:
-                self.values[SELECT] = [f'SELECT TOP({row_count}) *']
+                self.values[CMD_SELECT] = [f'SELECT TOP({row_count}) *']
             return self
         if Function.dialect == Dialect.ORACLE:
             Where.gte(row_count).add(SQL_ROW_NUM, self)
             if offset > 0:
                 Where.lte(row_count+offset).add(SQL_ROW_NUM, self)
             return self
-        self.values[LIMIT] = ['{}{}'.format(
+        self.values[CMD_LIMIT] = ['{}{}'.format(
             row_count, f' OFFSET {offset}' if offset > 0 else ''
         )]
         return self
@@ -3137,7 +3138,7 @@ class Select(DQL_Object):
         '''
         Recognizes if the field is from the current table
         '''
-        if key in (ORDER_BY, GROUP_BY) and '.' not in field:
+        if key in (CMD_ORDER_BY, CMD_GROUP_BY) and '.' not in field:
             return self.has_named_field(field)
         return re.findall(f'\b*{self.alias}[.]', field) != []
 
@@ -3258,7 +3259,7 @@ class Recursive(CTE):
 
     def __str__(self) -> str:
         if len(self.query_list) > 1:
-            self.query_list[-1].values[FROM].append(
+            self.query_list[-1].values[CMD_FROM].append(
                 f', {self.table_name} {self.alias}')
         return super().__str__()
 
@@ -3266,7 +3267,7 @@ class Recursive(CTE):
     def create(cls, name: str, pattern: str, formula: str, init_value, format: str=''):
         DQL_Object.ALIAS_FUNC = None
         def get_field(obj: DQL_Object, pos: int) -> str:
-            return obj.values[SELECT][pos].split('.')[-1]
+            return obj.values[CMD_SELECT][pos].split('.')[-1]
         t1, t2 = detect(
             pattern*2, join_method=None, format=format
         )
@@ -3566,11 +3567,11 @@ class RuleAlwaysTrue(Rule):
     @classmethod
     def apply(cls, target: Select):
         result = []
-        for condition in target.values.get(WHERE, []):
+        for condition in target.values.get(CMD_WHERE, []):
             if cls.notorious(condition):
                 continue
             result.append(condition)
-        target.values[WHERE] = result
+        target.values[CMD_WHERE] = result
 
 
 class RulePutLimit(Rule):
@@ -3580,7 +3581,7 @@ class RulePutLimit(Rule):
     """
     @classmethod
     def apply(cls, target: Select):
-        need_limit = any(not target.values.get(key) for key in (WHERE, SELECT))
+        need_limit = any(not target.values.get(key) for key in (CMD_WHERE, CMD_SELECT))
         if need_limit:
             target.limit()
 
@@ -3591,13 +3592,13 @@ class RuleSelectIN(Rule):
     """
     @classmethod
     def apply(cls, target: Select):
-        for i, condition in enumerate(target.values[WHERE]):
+        for i, condition in enumerate(target.values[CMD_WHERE]):
             tokens = re.split(r'\s+or\s+|\s+OR\s+', re.sub('\n|\t|[()]', ' ', condition))
             if len(tokens) < 2:
                 continue
             fields = [t.split('=')[0].split('.')[-1].lower().strip() for t in tokens]
             if len(set(fields)) == 1:
-                target.values[WHERE][i] = '{} IN ({})'.format(
+                target.values[CMD_WHERE][i] = '{} IN ({})'.format(
                     Field.format(fields[0], target),
                     ','.join(t.split('=')[-1].strip() for t in tokens)
                 )
@@ -3610,22 +3611,22 @@ class RuleAutoField(Rule):
     """
     @classmethod
     def apply(cls, target: Select):
-        if target.values.get(GROUP_BY):
-            target.values[SELECT] = target.values[GROUP_BY]
-            target.values[ORDER_BY] = []
-        elif target.values.get(ORDER_BY):
-            s1 = set(target.values.get(SELECT, []))
+        if target.values.get(CMD_GROUP_BY):
+            target.values[CMD_SELECT] = target.values[CMD_GROUP_BY]
+            target.values[CMD_ORDER_BY] = []
+        elif target.values.get(CMD_ORDER_BY):
+            s1 = set(target.values.get(CMD_SELECT, []))
             s2 = set(
-                fld.split()[0] for fld in target.values[ORDER_BY]
+                fld.split()[0] for fld in target.values[CMD_ORDER_BY]
             )
-            target.values.setdefault(SELECT, []).extend( list(s2-s1) )
-        elif not target.values.get(SELECT):
-            for condition in target.values.get(WHERE, []):
+            target.values.setdefault(CMD_SELECT, []).extend( list(s2-s1) )
+        elif not target.values.get(CMD_SELECT):
+            for condition in target.values.get(CMD_WHERE, []):
                 arr = re.split(r'([<>=]|\bin\b|\blike\b)', condition, re.IGNORECASE)
                 if len(arr) < 3 or arr[1] == '=':
                     continue
                 field = arr[0].split('.')[-1]
-                target.values.setdefault(SELECT, []).append(field)
+                target.values.setdefault(CMD_SELECT, []).append(field)
 
 class RuleCalcWithColumn(Rule):
     """
@@ -3634,7 +3635,7 @@ class RuleCalcWithColumn(Rule):
     """
     @classmethod
     def apply(cls, target: Select):
-        conditions = target.values[WHERE]
+        conditions = target.values[CMD_WHERE]
         REGEX_ALPHA = r'[A-Za-z]+'
         REGEX_FIELD = fr'({REGEX_ALPHA}[.])*({REGEX_ALPHA})'
         REGEX_MATH_OP = r'([\+\-\*\/])'
@@ -3672,14 +3673,14 @@ class RuleLogicalOp(Rule):
         REGEX = re.compile('({})'.format(
             '|'.join(cls.REVERSE)
         ))
-        for i, condition in enumerate(target.values.get(WHERE, [])):
+        for i, condition in enumerate(target.values.get(CMD_WHERE, [])):
             expr = re.sub('\n|\t', ' ', condition)
             if not re.search(r'\b(NOT|not).*[<>=]', expr):
                 continue
             tokens = [t.strip() for t in re.split(r'NOT\b|not\b|(<|>|=)', expr) if t]
             op = ''.join(t for t in tokens if t in cls.REVERSE)
             tokens = [tokens[0], cls.REVERSE[op], tokens[-1]]
-            target.values[WHERE][i] = ' '.join(tokens)
+            target.values[CMD_WHERE][i] = ' '.join(tokens)
 
 
 class RuleDateFuncReplace(Rule):
@@ -3691,7 +3692,7 @@ class RuleDateFuncReplace(Rule):
 
     @classmethod
     def apply(cls, target: Select):
-        for i, condition in enumerate(target.values.get(WHERE, [])):
+        for i, condition in enumerate(target.values.get(CMD_WHERE, [])):
             if not '(' in condition:
                 continue
             tokens = [
@@ -3702,7 +3703,7 @@ class RuleDateFuncReplace(Rule):
             func, field, *rest, const = tokens
             temp = Select(f'{target.table_name} {target.alias}')
             Between(f'{const}-01-01', f'{const}-12-31').add(field, temp)
-            target.values[WHERE][i] = ' AND '.join(temp.values[WHERE])
+            target.values[CMD_WHERE][i] = ' AND '.join(temp.values[CMD_WHERE])
 
 
 class RuleReplaceJoinBySubselect(Rule):
@@ -3720,8 +3721,8 @@ class RuleReplaceJoinBySubselect(Rule):
                 ref[0] == query.table_name for ref in ForeignKey.references
             ])
             keep_join = any([
-                len( query.values.get(SELECT, []) ) > 0,
-                len( query.values.get(WHERE, []) ) == 0,
+                len( query.values.get(CMD_SELECT, []) ) > 0,
+                len( query.values.get(CMD_WHERE, []) ) == 0,
                 not fk_field, more_relations
             ])
             if keep_join:
@@ -3779,7 +3780,7 @@ def detect(text: str, **args) -> Select | list[Select]:
     if auto_config:
         DQL_Object.USE_CATALOG = True
         DQL_Object.ALIAS_FUNC = lambda t: t[0].lower()
-        join_method=join_and_configure
+        join_method = join_and_configure
     else:
         join_method = args.get('join_method', join_queries)
     # -----------------------------------------------------------------------------------
@@ -3801,18 +3802,21 @@ def detect(text: str, **args) -> Select | list[Select]:
             query.set_file_format(format)
     if join_method:
         result = join_method(result)
+    if auto_config:
+        DQL_Object.USE_CATALOG = False
+        DQL_Object.ALIAS_FUNC  = None
     return result
 
 def extract_comments(query: Select, text: str) -> bool:
     REGEX_COMMENT = re.compile(r'(\w+)\s*[,]*\s*/\*([\s\S]*?)\*/')
     found = False
     for field, comment in REGEX_COMMENT.findall(text):
-        query.delete(field, [SELECT])
+        query.delete(field, [CMD_SELECT])
         class_type = Pivot
         result = 1
         if '=' not in comment:
             args = comment.strip().split()
-        elif query.values.get(GROUP_BY):
+        elif query.values.get(CMD_GROUP_BY):
             args = re.findall(r"(\w+)[=](\w+)", comment)
         else:
             result = field
@@ -4110,7 +4114,7 @@ class Insert(DML_Object):
             self.query = values
             if not self.table:
                 self.table = self.query.table_name            
-            self.fields = ( QueryLanguage.remove_alias(fld) for fld in self.query.values[SELECT] )
+            self.fields = ( QueryLanguage.remove_alias(fld) for fld in self.query.values[CMD_SELECT] )
             return ''
         return values_to_str( super().get_values(values) )
 
@@ -4133,9 +4137,3 @@ class Delete(DML_Object):
         )
 # ===========================================================================================//
 
-
-if __name__ == "__main__":
-    query = detect('''
-      Student(name, id) <- Test(student, score, course) -> Course(id, name)
-    ''', auto_config=True)
-    print(query)

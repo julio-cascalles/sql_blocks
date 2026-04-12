@@ -133,7 +133,7 @@ def select_expression_field(use_alias: bool) -> Select:
 
 def is_expected_expression(query: Select, elements: list) -> bool:
     txt1 = ' as '.join(elements)
-    for i, field in enumerate(query.values[SELECT]):
+    for i, field in enumerate(query.values[CMD_SELECT]):
         if i > 0:
             return False
         txt2 = field.lower()
@@ -146,4 +146,4 @@ def like_conditions() -> list:
         middle_name=contains('Cesar'),
         last_name=endswith('Cascalles'),
     )
-    return [v.split(' LIKE ')[-1] for v in query.values[WHERE]]
+    return [v.split(' LIKE ')[-1] for v in query.values[CMD_WHERE]]

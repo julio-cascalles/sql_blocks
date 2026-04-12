@@ -12,7 +12,7 @@ def diff_over_sum() -> set:
             student_id=Partition, due_date=OrderBy
         ).As('sum_per_student')
     )
-    return query.diff(SELECT, [], True)
+    return query.diff(CMD_SELECT, [], True)
 
 def function_fields() -> list:
     query=Select(
@@ -26,7 +26,7 @@ def function_fields() -> list:
             Having.count(gt(5))
         ]
     )
-    return query.values[SELECT]
+    return query.values[CMD_SELECT]
 
 
 def DateDiff_function_variants() -> dict:
@@ -93,7 +93,7 @@ def create_auto_convert_function() -> Select:
     )
 
 def compare_auto_convert_text(obj: Select) -> bool:
-    txt1 = obj.values[SELECT][-1].lower()
+    txt1 = obj.values[CMD_SELECT][-1].lower()
     txt2 = "Round(Cast(Current_Date() - p.birth As FLOAT)) as age".lower()
     return SequenceMatcher(None, txt1, txt2).ratio() > 0.66
 

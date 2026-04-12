@@ -393,9 +393,9 @@ m2 = Select(
     Select(
         'Product',
         label=Case('price').when(
-            lt(50), 'cheap'
+            lt(50)).then('cheap'
         ).when(
-            gt(100), 'expensive'
+            gt(100)).then('expensive'
         ).else_value(
             'normal'
         )

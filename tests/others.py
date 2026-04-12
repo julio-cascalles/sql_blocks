@@ -9,7 +9,7 @@ VOICE_TYPE_VALUE = 'deep'
 def error_inverted_condition() -> set:
     args = {VOICE_TYPE_FIELD: Not.eq(VOICE_TYPE_VALUE)}
     query = Select('Actor a', **args)
-    return query.diff(WHERE, [f"{VOICE_TYPE_FIELD} <> '{VOICE_TYPE_VALUE}'"], True)
+    return query.diff(CMD_WHERE, [f"{VOICE_TYPE_FIELD} <> '{VOICE_TYPE_VALUE}'"], True)
 
 def named_fields_in_nested_query() -> list:
     query = Select(
@@ -20,7 +20,7 @@ def named_fields_in_nested_query() -> list:
             id=PrimaryKey
         )
     )
-    return query.values[SELECT]
+    return query.values[CMD_SELECT]
 
 def first_name_from_expr_field() -> str:
     query = Select('Actor a')
@@ -35,7 +35,7 @@ def orderby_field_index() -> int:
         _=Count, _2=OrderBy
     )
     return int(
-        re.findall(r'\d+', query.values[ORDER_BY][-1])[0]
+        re.findall(r'\d+', query.values[CMD_ORDER_BY][-1])[0]
     )
 
 def many_fields_and_groups() -> dict:
@@ -65,8 +65,8 @@ def added_object_changes() -> set:
     )
     student = Select(student=Table('student_name, age'), id=PrimaryKey)
     teacher = Select(teacher=Table('teacher_name, course'), id=PrimaryKey)
-    s1 = set( (student + (_class + teacher)).values[FROM] )
-    s2 = set( _class.values[FROM] )
+    s1 = set( (student + (_class + teacher)).values[CMD_FROM] )
+    s2 = set( _class.values[CMD_FROM] )
     DQL_Object.ALIAS_FUNC = None
     return s1.intersection(s2)
 
