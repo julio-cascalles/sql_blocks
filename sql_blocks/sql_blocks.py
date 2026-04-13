@@ -1138,6 +1138,7 @@ def quoted(value) -> str:
 
 class Where(Condition):
     prefix = ''
+    quoted_result: bool = True
 
     def __init__(self, content: str, function: Function=None):
         self.content = content
@@ -1146,7 +1147,9 @@ class Where(Condition):
 
     @classmethod
     def new_condition(cls, operator: str, value):
-        return cls(f'{operator} {quoted(value)}')
+        if cls.quoted_result:
+            value = quoted(value)
+        return cls(f'{operator} {value}')
 
     @classmethod
     def formula(cls, formula: str):
@@ -1236,7 +1239,7 @@ class Not(Where):
 
     @classmethod
     def eq(cls, value):
-        return Where(f'<> {quoted(value)}')
+        return Where.new_condition('<>',value)
 
 
 class Case:
@@ -4095,9 +4098,21 @@ class DML_Object:
 
 class Insert(DML_Object):
     def get_command(self):
-        return 'INSERT INTO {} ({}) {};'.format(
-            self.table,  ', '.join(self.fields),
-            f"\n{self.query}" if self.query else 'VALUES ' + self.values
+        prefix = ''
+        if self.query:
+            if isinstance(self.query, CTE):
+                cte: CTE = self.query
+                cte.show_query = False
+                prefix = str(cte)
+                values = ''
+            else:
+                values = f"\n{self.query}"
+        elif self.values:
+            values = 'VALUES ' + self.values
+        else:
+            values = ''
+        return '{} INSERT INTO {} ({}) {};'.format(
+            prefix, self.table,  ', '.join(self.fields), values
         )
     
     def get_values(self, values) -> list:
@@ -4109,12 +4124,24 @@ class Insert(DML_Object):
             if not break_line:
                 result = f'\n\t({result})'
             return result
+        def remove_alias(txt: str) -> str:
+            found = re.split('as|AS', txt)
+            field, *alias = found
+            if alias:
+                return alias[0]
+            if '.' in field:
+                field = field.split('.')[-1]
+            return field
         # ---------------------------------------------------------------------------
         if isinstance(values, Select):
             self.query = values
             if not self.table:
-                self.table = self.query.table_name            
-            self.fields = ( QueryLanguage.remove_alias(fld) for fld in self.query.values[CMD_SELECT] )
+                self.table = self.query.table_name
+            field_list = self.query.values.get(CMD_SELECT)
+            if not field_list and isinstance(self.query, CTE):
+                cte: CTE = self.query
+                field_list = cte.query_list[0].values[CMD_SELECT]
+            self.fields = [remove_alias(fld) for fld in field_list ]
             return ''
         return values_to_str( super().get_values(values) )
 
@@ -4137,3 +4164,13 @@ class Delete(DML_Object):
         )
 # ===========================================================================================//
 
+if __name__ == "__main__":
+    Where.quoted_result = False    
+    query = Select(
+        'Produto p', categoria=Select(
+            'Produto_indisponivel ind', categoria=PrimaryKey,
+            produto_id=[ Not.eq('p.id'), Field ]
+        ), id=NamedField('id_substituto')
+    )
+    cte = CTE('Produtos_Recomendados', [query])
+    print( Insert(cte, 'Recomendacoes') )

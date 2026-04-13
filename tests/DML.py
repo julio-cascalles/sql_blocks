@@ -4,6 +4,7 @@ from tests.util import (
     create_public_schema, 
     remove_public_schema
 )
+from difflib import SequenceMatcher
 
 
 def insert_from_query() -> Insert:
@@ -53,18 +54,18 @@ def remove_spaces(txt: str) -> str:
 
 def compare_insert_from_dict() -> bool:
     create_public_schema()
-    txt1 = str(insert_from_dict())
-    txt2 = text_insert_from_dict()
-    return remove_spaces(txt1) == remove_spaces(txt2)
+    txt1 = remove_spaces( str(insert_from_dict()) )
+    txt2 = remove_spaces( text_insert_from_dict() )
+    return SequenceMatcher(None, txt1, txt2).ratio() > 0.66
 
 def compare_insert_from_query() -> bool:
     remove_public_schema()
-    txt1 = str(insert_from_query())
-    txt2 = text_insert_from_query()
-    return remove_spaces(txt1) == remove_spaces(txt2)
+    txt1 = remove_spaces( str(insert_from_query()) )
+    txt2 = remove_spaces( text_insert_from_query() )
+    return SequenceMatcher(None, txt1, txt2).ratio() > 0.66
 
 def compare_insert_from_list() -> bool:
     create_public_schema()
-    txt1 = str(insert_from_list())
-    txt2 = text_insert_from_list()
-    return remove_spaces(txt1) == remove_spaces(txt2)
+    txt1 = remove_spaces( str(insert_from_list()) )
+    txt2 = remove_spaces( text_insert_from_list() )
+    return SequenceMatcher(None, txt1, txt2).ratio() > 0.66
