@@ -218,10 +218,11 @@ class DQL_Object:
     def split_fields(cls, text: str, key: str) -> list:
         text = re.sub(r'\s+', ' ', text)
         if key == CMD_SELECT:
+            if '(' in text:
+                return [text]
+            #     return cls.split_functions(text)        
             if cls.contains_CASE_statement(text):
                 return Case.parse(text)
-            # if '(' in text:
-            #     return cls.split_functions(text)        
         separator = cls.get_separator(key)
         return re.split(separator, text)
 
@@ -256,7 +257,7 @@ class DQL_Object:
             return set(
                 (
                     fld 
-                    if key == CMD_SELECT and self.is_named_field(fld, key) 
+                    if key == CMD_SELECT and self.is_named_field(fld, '') 
                     else
                     re.sub(pattern, '', cleanup(fld))
                 )
@@ -1289,7 +1290,7 @@ class Case:
                 )           
         return '{pfx}CASE{body}{df}{brk}{tab}END{alias}'.format(
             brk=LINE_BREAK, body=body, alias=f' AS {name}' if name else '', tab=TABULATION,
-            df=f'{LINE_BREAK}{TABULATION}{MARGIN}ELSE{default}' if not default is None else '',
+            df=f'{LINE_BREAK}{TABULATION}{MARGIN}ELSE {default}' if not default is None else '',
             pfx=LINE_BREAK+TABULATION if self.level else ''
         )
     
@@ -4164,36 +4165,50 @@ class Delete(DML_Object):
         )
 # ===========================================================================================//
 
+# if __name__ == "__main__":
+#     print('=======================================')
+#     query = Select('Sales s')
+#     query.break_lines = False
+#     print(query)
+#     print('----------------------------------------')
+#     query(
+#         customer_id=[GroupBy, Field]
+#     )
+#     query.break_lines = True
+#     print(query)
+#     print('----------------------------------------')
+#     query.delete('customer_id')
+#     query(
+#         customer_id=Select(
+#             'Customer c', id=PrimaryKey, name=[Field, GroupBy]
+#         )
+#     )
+#     print(query)
+#     print('----------------------------------------')
+#     query(
+#         ref_date=Year.eq(2025)
+#     )
+#     print(query)
+#     print('----------------------------------------')
+#     query.optimize()
+#     print(query)
+#     print('----------------------------------------')
+#     query(
+#         quantity=Sum().As('total', OrderBy.DESC)
+#     )
+#     print(query)
+#     print('----------------------------------------')
+
+
 if __name__ == "__main__":
-    print('=======================================')
-    query = Select('Sales s')
-    query.break_lines = False
-    print(query)
-    print('----------------------------------------')
-    query(
-        customer_id=[GroupBy, Field]
-    )
-    query.break_lines = True
-    print(query)
-    print('----------------------------------------')
-    query.delete('customer_id')
-    query(
-        customer_id=Select(
-            'Customer c', id=PrimaryKey, name=[Field, GroupBy]
+    query = Select(
+        'Sales s',
+        product_id=Select(
+            'Product p', id=PrimaryKey,
+            category=Pivot(
+                's.quantity',
+                'celular food sport toys'.split()
+            )
         )
     )
     print(query)
-    print('----------------------------------------')
-    query(
-        ref_date=Year.eq(2025)
-    )
-    print(query)
-    print('----------------------------------------')
-    query.optimize()
-    print(query)
-    print('----------------------------------------')
-    query(
-        quantity=Sum().As('total', OrderBy.DESC)
-    )
-    print(query)
-    print('----------------------------------------')

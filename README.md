@@ -457,7 +457,7 @@ Transforms rows into columns depending on their values
 
     query = Select(
             'Sales s',
-            region=Pivot(['north', 'south', 'east', 'west'], 'price')
+            region=Pivot('price', ['north', 'south', 'east', 'west'])
     )
 ...is equals to...
 ```
