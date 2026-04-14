@@ -3615,7 +3615,7 @@ class RuleAutoField(Rule):
     @classmethod
     def apply(cls, target: Select):
         if target.values.get(CMD_GROUP_BY):
-            target.values[CMD_SELECT] = target.values[CMD_GROUP_BY]
+            target.values[CMD_SELECT] = target.values[CMD_GROUP_BY].copy()
             target.values[CMD_ORDER_BY] = []
         elif target.values.get(CMD_ORDER_BY):
             s1 = set(target.values.get(CMD_SELECT, []))
@@ -4165,12 +4165,35 @@ class Delete(DML_Object):
 # ===========================================================================================//
 
 if __name__ == "__main__":
-    Where.quoted_result = False    
-    query = Select(
-        'Produto p', categoria=Select(
-            'Produto_indisponivel ind', categoria=PrimaryKey,
-            produto_id=[ Not.eq('p.id'), Field ]
-        ), id=NamedField('id_substituto')
+    print('=======================================')
+    query = Select('Sales s')
+    query.break_lines = False
+    print(query)
+    print('----------------------------------------')
+    query(
+        customer_id=[GroupBy, Field]
     )
-    cte = CTE('Produtos_Recomendados', [query])
-    print( Insert(cte, 'Recomendacoes') )
+    query.break_lines = True
+    print(query)
+    print('----------------------------------------')
+    query.delete('customer_id')
+    query(
+        customer_id=Select(
+            'Customer c', id=PrimaryKey, name=[Field, GroupBy]
+        )
+    )
+    print(query)
+    print('----------------------------------------')
+    query(
+        ref_date=Year.eq(2025)
+    )
+    print(query)
+    print('----------------------------------------')
+    query.optimize()
+    print(query)
+    print('----------------------------------------')
+    query(
+        quantity=Sum().As('total', OrderBy.DESC)
+    )
+    print(query)
+    print('----------------------------------------')
