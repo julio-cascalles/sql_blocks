@@ -126,6 +126,7 @@ class DQL_Object:
     You can change the behavior by assigning 
     a user function to DQL_Object.ALIAS_FUNC
     """
+    FILE_PATH = ''
     USE_CATALOG: bool = False
 
     catalog = {}
@@ -188,9 +189,12 @@ class DQL_Object:
     def table_name(self) -> str:
         return self.values[CMD_FROM][0].split()[0]
     
-    def set_file_format(self, pattern: str):
+    def set_file_format(self, pattern: str):        
         if '{' not in pattern:
             pattern = '{}' + pattern
+        if self.FILE_PATH:
+            from os import path
+            path.join(self.FILE_PATH, pattern)
         self.values[CMD_FROM][0] = pattern.format(self.aka())
 
     @property
@@ -914,7 +918,11 @@ class Count(Aggregate, Function):
     """
     Return the number of rows that matches a specified criterion.
     """
-    ...
+    @classmethod
+    def alternative_names(cls):
+        return {
+            Dialect.BIGQUERY: 'APPROX_COUNT_DISTINCT'
+        }
 
 class StdDev(Aggregate, Function):
     """
@@ -3263,8 +3271,9 @@ class Recursive(CTE):
 
     def __str__(self) -> str:
         if len(self.query_list) > 1:
+            new_alias = self.increment_alias()
             self.query_list[-1].values[CMD_FROM].append(
-                f', {self.table_name} {self.alias}')
+                f', {self.table_name} {new_alias}')
         return super().__str__()
 
     @classmethod
@@ -3284,9 +3293,12 @@ class Recursive(CTE):
                 formula = formula.replace(f'[{num}]', '%')
             else:
                 formula = formula.replace(f'[{num}]', get_field(t2, num-1))
+        cte = cls(name, [t1, t2])
+        if '{a}' in formula:
+            formula = formula.replace('{a}', cte.increment_alias()+'.')
         Where.eq(init_value).add(pk_field, t1)
         Where.formula(formula).add(foreign_key or pk_field, t2)
-        return cls(name, [t1, t2])
+        return cte
 
     def counter(self, name: str, start, increment: str='+1'):
         for i, query in enumerate(self.query_list):
@@ -4201,14 +4213,9 @@ class Delete(DML_Object):
 
 
 if __name__ == "__main__":
-    query = Select(
-        'Sales s',
-        product_id=Select(
-            'Product p', id=PrimaryKey,
-            category=Pivot(
-                's.quantity',
-                'celular food sport toys'.split()
-            )
-        )
+    Select.FILE_PATH = 'sample_data'
+    R = Recursive.create(
+        'Composicao c', 'Receita(produto, ingrediente, quantidade)',
+        '[2] = {a}[1]', 13, '.csv'
     )
-    print(query)
+    print(R)
