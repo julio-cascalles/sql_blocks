@@ -3280,12 +3280,22 @@ class Recursive(CTE):
     @classmethod
     def create(cls, name: str, pattern: str, formula: str, init_value, format: str=''):
         DQL_Object.ALIAS_FUNC = None
+        # -----------------------------------------------------------
         def get_field(obj: DQL_Object, pos: int) -> str:
             return obj.values[CMD_SELECT][pos].split('.')[-1]
+        def duplicate_pk(txt: str) -> str:
+            found = re.search(r'[*](\w+)', txt)
+            if not found:
+                return txt
+            pos = found.end()
+            field = found.group(1)
+            return txt[:pos] + f',{field}' + txt[pos:]
+        # -----------------------------------------------------------
+        pattern = duplicate_pk(pattern)
         t1, t2 = detect(
             pattern*2, join_method=None, format=format
         )
-        pk_field = get_field(t1, 0)
+        pk_field = t1.key_field or get_field(t1, 0)
         foreign_key = ''
         for num in re.findall(r'\[(\d+)\]', formula):
             num = int(num)
@@ -4216,7 +4226,8 @@ class Delete(DML_Object):
 if __name__ == "__main__":
     Select.FILE_PATH = 'sample_data'
     R = Recursive.create(
-        'Composicao c', 'Receita(produto, ingrediente, quantidade)',
+        'Composicao c', 'Receita(ingrediente, *produto, quantidade)',
         '[2] = {a}[1]', 13, '.csv'
-    )
+    ).join('Produto(*id,nome)', 'ingrediente', format='.csv'
+    ).counter('nivel', 1).add_fields('quantidade, ingrediente').add_fields('nivel', OrderBy)
     print(R)
