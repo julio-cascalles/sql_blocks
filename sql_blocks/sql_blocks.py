@@ -194,7 +194,8 @@ class DQL_Object:
             pattern = '{}' + pattern
         if self.FILE_PATH:
             from os import path
-            path.join(self.FILE_PATH, pattern)
+            pattern = path.join(self.FILE_PATH, pattern)
+        pattern = "'" + pattern + "'"
         self.values[CMD_FROM][0] = pattern.format(self.aka())
 
     @property
