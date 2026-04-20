@@ -3269,6 +3269,7 @@ class CTE(Select):
 
 class Recursive(CTE):
     prefix = 'RECURSIVE '
+    AUTO_ADD_FIELDS: bool = False
 
     def __str__(self) -> str:
         if len(self.query_list) > 1:
@@ -3309,6 +3310,8 @@ class Recursive(CTE):
             formula = formula.replace('{a}', cte.increment_alias()+'.')
         Where.eq(init_value).add(pk_field, t1)
         Where.formula(formula).add(foreign_key or pk_field, t2)
+        if cls.AUTO_ADD_FIELDS:
+            cte.add_fields( set(re.findall(r'[(,*]\s*(\w+)', pattern)) )
         return cte
 
     def counter(self, name: str, start, increment: str='+1'):
@@ -4188,46 +4191,13 @@ class Delete(DML_Object):
         )
 # ===========================================================================================//
 
-# if __name__ == "__main__":
-#     print('=======================================')
-#     query = Select('Sales s')
-#     query.break_lines = False
-#     print(query)
-#     print('----------------------------------------')
-#     query(
-#         customer_id=[GroupBy, Field]
-#     )
-#     query.break_lines = True
-#     print(query)
-#     print('----------------------------------------')
-#     query.delete('customer_id')
-#     query(
-#         customer_id=Select(
-#             'Customer c', id=PrimaryKey, name=[Field, GroupBy]
-#         )
-#     )
-#     print(query)
-#     print('----------------------------------------')
-#     query(
-#         ref_date=Year.eq(2025)
-#     )
-#     print(query)
-#     print('----------------------------------------')
-#     query.optimize()
-#     print(query)
-#     print('----------------------------------------')
-#     query(
-#         quantity=Sum().As('total', OrderBy.DESC)
-#     )
-#     print(query)
-#     print('----------------------------------------')
-
 
 if __name__ == "__main__":
     Select.FILE_PATH = 'sample_data'
+    Recursive.AUTO_ADD_FIELDS = True
     R = Recursive.create(
         'Composicao c', 'Receita(ingrediente, *produto, quantidade)',
-        '[2] = {a}[1]', 13, '.csv'
-    ).join('Produto(*id,nome)', 'ingrediente', format='.csv'
-    ).counter('nivel', 1).add_fields('quantidade, ingrediente').add_fields('nivel', OrderBy)
+        '[2] = {a}[1]', 14, format='.csv'
+    ).join('Produto(*id,nome, estoque)', 'ingrediente', format='.csv'
+    ).counter('nivel', 1)
     print(R)
