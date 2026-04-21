@@ -3307,17 +3307,16 @@ class Recursive(CTE):
         q2 = q1.copy()
         pk_field = q1.key_field or cls.get_field(q1, 0)
         foreign_key = ''
+        cte = cls(name, [q1, q2])
         for num in re.findall(r'\[(\d+)\]', formula):
             num = int(num)
             if not foreign_key:
                 foreign_key = cls.get_field(q2, num-1)
                 formula = formula.replace(f'[{num}]', '%')
             else:
-                formula = formula.replace(f'[{num}]', cls.get_field(q2, num-1))
-        cte = cls(name, [q1, q2])
-        if '{a}' in formula:
-            formula = formula.replace('{a}', cte.increment_alias()+'.')
-        # Where.eq(init_value).add(pk_field, q1)
+                formula = formula.replace(f'[{num}]', '{}.{}'.format(
+                    cte.increment_alias(), cls.get_field(q2, num-1)
+                ))
         Where.eq(init_value).add( cls.get_field(q1, 0) , q1)
         Where.formula(formula).add(foreign_key or pk_field, q2)
         if cls.AUTO_ADD_FIELDS:
@@ -4230,6 +4229,6 @@ if __name__ == "__main__":
             Receita(produto, quantidade, *ingrediente)
             <-
             Produto(id, nome, estoque)
-        """, '[1] = {a}[3]', 14, format='.csv'
+        """, '[1] = [3]', 14, format='.csv'
     ).counter('nivel', 1)
     print(R)
