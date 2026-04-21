@@ -138,7 +138,7 @@ class DQL_Object:
         self.set_table(table_name)
 
     @staticmethod
-    def split_filename(file_name: str) -> list|tuple:
+    def split_filename(file_name: str) -> list:
         found = re.findall(r'[\'"]*(.*[/])(\w+)([.]\w+)[\'"]*', file_name)
         if found:
             found = found[0]
@@ -3278,12 +3278,21 @@ class Recursive(CTE):
                 f', {self.table_name} {new_alias}')
         return super().__str__()
 
+    @staticmethod
+    def get_field(obj: DQL_Object, pos: int) -> str:
+        return obj.values[CMD_SELECT][pos].split('.')[-1]
+
+    @staticmethod
+    def extract_table_name(obj: DQL_Object) -> str:
+        found = re.findall(r'[\\/](\w+)[.]', obj.table_name)
+        if not found:
+            return obj.table_name
+        return found[0]
+
     @classmethod
     def create(cls, name: str, pattern: str, formula: str, init_value, format: str=''):
         DQL_Object.ALIAS_FUNC = None
         # -----------------------------------------------------------
-        def get_field(obj: DQL_Object, pos: int) -> str:
-            return obj.values[CMD_SELECT][pos].split('.')[-1]
         def duplicate_pk(txt: str) -> str:
             found = re.search(r'[*](\w+)', txt)
             if not found:
@@ -3293,25 +3302,38 @@ class Recursive(CTE):
             return txt[:pos] + f',{field}' + txt[pos:]
         # -----------------------------------------------------------
         pattern = duplicate_pk(pattern)
-        t1, t2 = detect(
-            pattern*2, join_method=None, format=format
-        )
-        pk_field = t1.key_field or get_field(t1, 0)
+        query_list = detect(pattern, join_method=None, format=format)
+        q1 = query_list[0]
+        q2 = q1.copy()
+        pk_field = q1.key_field or cls.get_field(q1, 0)
         foreign_key = ''
         for num in re.findall(r'\[(\d+)\]', formula):
             num = int(num)
             if not foreign_key:
-                foreign_key = get_field(t2, num-1)
+                foreign_key = cls.get_field(q2, num-1)
                 formula = formula.replace(f'[{num}]', '%')
             else:
-                formula = formula.replace(f'[{num}]', get_field(t2, num-1))
-        cte = cls(name, [t1, t2])
+                formula = formula.replace(f'[{num}]', cls.get_field(q2, num-1))
+        cte = cls(name, [q1, q2])
         if '{a}' in formula:
             formula = formula.replace('{a}', cte.increment_alias()+'.')
-        Where.eq(init_value).add(pk_field, t1)
-        Where.formula(formula).add(foreign_key or pk_field, t2)
+        # Where.eq(init_value).add(pk_field, q1)
+        Where.eq(init_value).add( cls.get_field(q1, 0) , q1)
+        Where.formula(formula).add(foreign_key or pk_field, q2)
         if cls.AUTO_ADD_FIELDS:
-            cte.add_fields( set(re.findall(r'[(,*]\s*(\w+)', pattern)) )
+            cte.add_fields([
+                fld.split('.')[-1] for fld in q1.values[CMD_SELECT]
+            ])
+        if len(query_list) == 2:
+            q3 = query_list[-1]
+            key = (
+                cls.extract_table_name(q3),
+                cls.extract_table_name(q1)
+            )
+            pk_field, foreign_key = ForeignKey.references.get(key)
+            PrimaryKey.add(pk_field, q3)
+            cte.break_lines = True
+            q3.add(foreign_key, cte)
         return cte
 
     def counter(self, name: str, start, increment: str='+1'):
@@ -3320,6 +3342,8 @@ class Recursive(CTE):
                 Field.add(f'{start} AS {name}', query)
             else:
                 Field.add(f'({name}{increment}) AS {name}', query)
+        if self.AUTO_ADD_FIELDS:
+            self.add_fields(name)
         return self
 
 
@@ -4195,9 +4219,17 @@ class Delete(DML_Object):
 if __name__ == "__main__":
     Select.FILE_PATH = 'sample_data'
     Recursive.AUTO_ADD_FIELDS = True
+    # R = Recursive.create(
+    #     'Composicao c', 'Receita(ingrediente, *produto, quantidade)',
+    #     '[2] = {a}[1]', 14, format='.csv'
+    # ).join('Produto(*id,nome, estoque)', 'ingrediente', format='.csv'
+    # ).counter('nivel', 1)
+    # -------------------------------------------------------
     R = Recursive.create(
-        'Composicao c', 'Receita(ingrediente, *produto, quantidade)',
-        '[2] = {a}[1]', 14, format='.csv'
-    ).join('Produto(*id,nome, estoque)', 'ingrediente', format='.csv'
+        'Composicao c', """
+            Receita(produto, quantidade, *ingrediente)
+            <-
+            Produto(id, nome, estoque)
+        """, '[1] = {a}[3]', 14, format='.csv'
     ).counter('nivel', 1)
     print(R)
