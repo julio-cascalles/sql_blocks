@@ -1264,6 +1264,9 @@ class Case:
         self.fields = []
         self.level: int = 0
 
+    def get_case(self, name: str) -> 'Case':
+        return self
+
     def when(self, condition: Where):
         self.current_condition = condition
         return self
@@ -1487,9 +1490,9 @@ class Range(Case):
         cls = self.__class__
         Case.break_lines = True
         for value, label in self.sorted_numeric_key(values):
-            if isinstance(label, If):
+            if isinstance(label, (If, Case)):
                 _case = label.get_case('')
-                _case.level = 1
+                _case.level = self.level + 1
                 label = str(_case)
                 Case.quoted_result = False                
             self.when(
@@ -4214,21 +4217,3 @@ class Delete(DML_Object):
         )
 # ===========================================================================================//
 
-
-if __name__ == "__main__":
-    Select.FILE_PATH = 'sample_data'
-    Recursive.AUTO_ADD_FIELDS = True
-    # R = Recursive.create(
-    #     'Composicao c', 'Receita(ingrediente, *produto, quantidade)',
-    #     '[2] = {a}[1]', 14, format='.csv'
-    # ).join('Produto(*id,nome, estoque)', 'ingrediente', format='.csv'
-    # ).counter('nivel', 1)
-    # -------------------------------------------------------
-    R = Recursive.create(
-        'Composicao c', """
-            Receita(produto, quantidade, *ingrediente)
-            <-
-            Produto(id, nome, estoque)
-        """, '[1] = [3]', 14, format='.csv'
-    ).counter('nivel', 1)
-    print(R)
