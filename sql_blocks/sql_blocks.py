@@ -84,7 +84,7 @@ class FuncNode:
         )
 
     @classmethod
-    def create(cls, text: str, callback: callable=None) -> str:
+    def create(cls, text: str, callback: callable=None) -> list:
         cls.text = text
         cls.stack = []
         ignore: str = ''
@@ -2074,7 +2074,7 @@ class PandasLanguage(DataAnalysisLanguage):
             return ''
         # -------------------------------------------------------
         common_fields = self.split_agg_fields(values)
-        if '(' in common_fields[0]:
+        if common_fields and '(' in common_fields[0]:
             FuncNode.create(','.join(common_fields))
             common_fields = [node2pandas_func(node) for node in FuncNode.stack]
         if common_fields:
@@ -2189,15 +2189,21 @@ class PandasLanguage(DataAnalysisLanguage):
         result = '.groupby([\n\t{}\n])'.format(
             self.clean_values(values)
         )
-        if self.aggregation_fields:            
-            PANDAS_AGG_FUNC = {'Avg': 'mean', 'Count': 'size'}
+        if self.aggregation_fields:
+            PANDAS_AGG_FUNC = {'AVG': 'mean', 'COUNT': 'size'}
             result += '.agg({'
+            agg_fields = []
             for field in self.aggregation_fields:
-                func, field, *alias = re.split('[()]', field) # [To-Do: Use `alias`]
-                result += "{}'{}': ['{}']".format(
-                    self.TABULATION, field,
-                    PANDAS_AGG_FUNC.get(func, func)
-                )
+                for field in re.findall(r'[^,\s][^,]*?(?=\s*,|\s*$)', field):
+                    FuncNode.create(field)
+                    if FuncNode.stack:
+                        node:FuncNode = FuncNode.stack[0]
+                        func  = node.func_name
+                        field = node.field
+                        result += "{}'{}': ['{}']".format(
+                            self.TABULATION, field,
+                            PANDAS_AGG_FUNC.get(func.upper(), func)
+                        )
             result += '\n})'
         return result
     
@@ -4217,3 +4223,28 @@ class Delete(DML_Object):
         )
 # ===========================================================================================//
 
+
+if __name__ == "__main__":
+    SCRIPT = """
+    SELECT
+        e.gender, d.region,
+        Avg(e.age)
+    FROM
+        Employees e
+        JOIN Departments d ON (e.dept_id = d.id)
+    WHERE
+        (
+            e.name LIKE 'Alice%'
+            OR
+            e.name LIKE '%Smith'
+        )
+        AND d.sector = 656
+    GROUP BY
+        e.gender, d.region
+    ORDER BY
+        d.region DESC
+    """
+    query = detect(SCRIPT)
+    print('########################################')
+    print( query.translate_to('pandas') )
+    print('########################################')
