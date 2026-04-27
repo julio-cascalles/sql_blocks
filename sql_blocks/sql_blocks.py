@@ -854,9 +854,15 @@ class Window(Frame):
 
     PATTERNS = [] # To be defined in the child classes.
 
-    def __init__(self, formula: str=''):
+    def __init__(self, formula: str='', partition: str='', order_by: str=''):
         self.formula = formula
         super().__init__()
+        if partition:
+            if order_by:
+                self.partition = {order_by: OrderBy}
+            self.partition |= {partition: Partition}
+            return
+        self.partition = None
 
     @staticmethod
     def sorted_vars(pattern: str, formula: str) -> list:
@@ -888,7 +894,13 @@ class Window(Frame):
         if self.formula:
             alias = name
             name, other = self.find_patterns()
+            if '?' in self.formula:
+                self.formula = self.formula.replace('?', other)
             self.As(other, ExpressionField(f'{self.formula} AS {alias}'))
+        if self.partition:
+            for field in self.partition:
+                Field.add(field, main)
+            self.over(**self.partition)
         return super().format(name, main)
 
 
@@ -970,8 +982,9 @@ class Lag(Window, Function):
     preceding row within the same result set.
     """
     output = ANY
-    PATTERNS = [
+    PATTERNS = [        
         '({1}-{2})/{2}',
+        '{1}-{2}'
     ]
 
 
@@ -981,8 +994,9 @@ class Lead(Window, Function):
     subsequent row within the same result set.
     """
     output = ANY
-    PATTERNS = [
+    PATTERNS = [        
         '({2}-{1})/{1}',
+        '{2}-{1}',
     ]
 
 
@@ -3463,7 +3477,7 @@ class CTENode:
                 node = node.parent
             else:
                 name = found.group(1)
-                sql_flag = {key: name.upper() == key for key in ('FROM', 'JOIN')}
+                sql_flag = {key: name.upper() == key for key in ('FROM', 'JOIN', 'IN')}
                 if any(sql_flag.values()):
                     name = ''
                 elif txt[i-1] == '(':
@@ -4225,26 +4239,25 @@ class Delete(DML_Object):
 
 
 if __name__ == "__main__":
-    SCRIPT = """
-    SELECT
-        e.gender, d.region,
-        Avg(e.age)
-    FROM
-        Employees e
-        JOIN Departments d ON (e.dept_id = d.id)
-    WHERE
-        (
-            e.name LIKE 'Alice%'
-            OR
-            e.name LIKE '%Smith'
+    # query = Select(
+    #     'Investiment',
+    #     variation=Lag(
+    #         '(curr_value - prev_value) / ?',
+    #         'customer', 'ref_date'
+    #     )
+    # )
+    # print(query)
+    c = CTEFactory("""
+        SELECT
+            categoria,
+            SUM(valor_venda) as total
+        FROM v_massa_vendas
+        WHERE cliente_id IN (
+            SELECT cliente_id
+            FROM v_clientes_status
+            WHERE status_cliente = 'Ativo'
         )
-        AND d.sector = 656
-    GROUP BY
-        e.gender, d.region
-    ORDER BY
-        d.region DESC
-    """
-    query = detect(SCRIPT)
-    print('########################################')
-    print( query.translate_to('pandas') )
-    print('########################################')
+        GROUP BY categoria
+        ;
+    """)
+    print(c)
