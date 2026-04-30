@@ -418,10 +418,10 @@ class DialectLanguage:
         Function.dialect = self.dialect
         script = str(self.target)
         for func_name in re.findall(r"(\w+)[(]", script):
-            for class_type in Function.descendants():
-                if class_type.match(func_name):
-                    script = script.replace( f"{func_name}(", class_type.name()+'(' )
-                    break
+            found = Function.find(func_name)
+            if found:
+                script = script.replace( f"{func_name}(", found.name()+'(' )
+                break
         return script
 
 class OracleLanguage(DialectLanguage):
@@ -547,6 +547,13 @@ class Function(Code, Condition):
                 return True
         return False
     
+    @classmethod
+    def find(cls, search: str) -> type:
+        for class_type in cls.descendants():
+            if class_type.match(search):
+                return class_type
+        return None
+
     @classmethod
     def descendants(cls, func_type: str='') -> list:
         result = []
@@ -733,6 +740,7 @@ class Trunc(Function):
     inputs = [FLOAT]
     output = INT
 
+
 # --- Date Functions: ------------------------------------
 class DateDiff(Function):
     """
@@ -788,6 +796,7 @@ class DatePart(Function):
         result = super().help()
         return result.replace('DatePart ', "Date Function ")
 
+
 class Year(DatePart):
     @classmethod
     def alternative_names(cls) -> dict:
@@ -804,8 +813,6 @@ class Day(DatePart):
     @classmethod
     def alternative_names(cls) -> dict:
         return {}
-
-
 
 
 class Current_Date(Function):
@@ -3371,10 +3378,12 @@ class Recursive(CTE):
 
 class CTENode:
     TEMPLATE_FIELD_FUNC = lambda t: t[:3].lower() + '_id'
+    NEW_NAME_FUNC = lambda node: f'cte_{node.pos}'
 
     def __init__(self, descr: str='', pos: int=-1, parent: 'CTENode' = None):
         self.description = descr
         self.pos = pos
+        self.end = pos
         self.parent = None
         self.children = []
         if parent:
@@ -3405,6 +3414,12 @@ class CTENode:
     @classmethod
     def create(cls, txt: str, template: str='') -> 'CTENode':
         PAIR = {'(': ')', '[': ']'}
+        node: 'CTENode' = None
+        root: 'CTENode' = None
+        main: 'CTENode' = None
+        orphans: list = []
+        ignore: int = 0
+        # -------------------------------------------------------------------
         def pattern() -> str:
             REGEX_OPENING = ''.join( fr"\{char}" for char in PAIR.keys() )
             REGEX_CLOSING = ''.join( fr"\{char}" for char in PAIR.values() )
@@ -3417,8 +3432,10 @@ class CTENode:
             if found:
                 node.description = found.group(1)
             REGEX_UNION = r'UNION\s+ALL|\bunion\b|\bUNION\b|union\s+all'
-            for sub in re.split(REGEX_UNION, node.content):
-                cls('', -1, node).content = re.sub(r"\s+", ' ', sub).strip()
+            union_list = re.split(REGEX_UNION, node.content)
+            if len(union_list) > 1:
+                for sub in union_list:
+                    cls('', -1, node).content = re.sub(r"\s+", ' ', sub).strip()
             if node.sql_flag['JOIN'] and node.parent:
                 REGEX_FIELD = r"\s*(\w+[.])*(\w+)\s*"
                 REGEX_JOIN = fr"\bON\b({REGEX_FIELD}={REGEX_FIELD})"
@@ -3438,6 +3455,25 @@ class CTENode:
                 }
                 node.content = 'SELECT {fld} FROM {t1} {a1} JOIN {t2} {a2} ON {a1}.{r1}={a2}.{r2}'.format(**params)
         # -------------------------------------------------------------------
+        def check_inners():
+            if not main:
+                return
+            sub_st = 0
+            for child in main.children:
+                if not child.sql_flag['IN']:
+                    continue
+                if not sub_st:
+                    main.content = ''
+                    main.sql_flag['IN'] = True
+                child.description = CTENode.NEW_NAME_FUNC(child)
+                main.content += '{}{})'.format(
+                    txt[sub_st:child.pos], child.description, 
+                )
+                sub_st = child.end
+            if not sub_st:
+                return
+            main.content += txt[sub_st:]
+        # -------------------------------------------------------------------
         if template:
             for name in re.findall(r'[#](\w+)', txt):
                 old = f"#{name}"
@@ -3445,11 +3481,6 @@ class CTENode:
                     t=name, f=cls.TEMPLATE_FIELD_FUNC(name)
                 )
                 txt = txt.replace(old, new)
-        node: 'CTENode' = None
-        root: 'CTENode' = None
-        main: 'CTENode' = None
-        orphans: list = []
-        ignore: int = 0
         for found in re.finditer(pattern(), txt):
             i = found.end()
             if found.group() in PAIR.values():
@@ -3457,14 +3488,15 @@ class CTENode:
                     continue
                 if ignore:
                     ignore -= 1
-                    continue
+                    if not node.sql_flag['IN']:
+                        continue
                 if not node.has_join():
-                    node.content = re.sub(r'\s+', ' ', txt[node.pos: i-1])
+                    node.content = re.sub(r'\s+', ' ', txt[node.pos: i-1])                    
                 if not node.parent:
                     orphans.append(node)
-                    if len(orphans) > 1:
+                    if len(orphans) > 1 or node.sql_flag['IN']:
                         if not main:
-                            main = cls('main')
+                            main = cls('main', i)
                             main.content = txt[i:].strip()
                         for lost in orphans:
                             main.add(lost)
@@ -3474,9 +3506,12 @@ class CTENode:
                         node.content = txt[i:].strip()
                 if node.is_sql():
                     get_sql_children(node, i)
+                node.end = i
                 node = node.parent
             else:
                 name = found.group(1)
+                # if Function.find(name):
+                #     continue
                 sql_flag = {key: name.upper() == key for key in ('FROM', 'JOIN', 'IN')}
                 if any(sql_flag.values()):
                     name = ''
@@ -3489,6 +3524,7 @@ class CTENode:
                     root = node
                 node.sql_flag = sql_flag
                 node.expected_char = PAIR[txt[i-1]]
+        check_inners()
         return root
 
 
@@ -3558,30 +3594,37 @@ class CTEFactory:
                     return
             query = None
         # -----------------------------------------------
-        if not node.description:
-            node.content = query
-            return
-        elif node.children:
-            query_list = []
-            child: CTENode
-            for child in node.children:
-                if child.description:
-                    query_list.append( detect(f'SELECT * FROM {child.description}') )
-                else:
-                    query_list.append(child.content)
-        else:
-            query_list = [query]
+        is_main: bool = all([
+            node.description == 'main',
+            node.children,
+            node.sql_flag.get('IN'),
+        ])
+        query_list = []
+        if not is_main:
+            if not node.description:
+                node.content = query
+                return
+            elif node.children:                
+                child: CTENode
+                for child in node.children:
+                    if child.description:
+                        query_list.append( detect(f'SELECT * FROM {child.description}') )
+                    else:
+                        query_list.append(child.content)
+            else:
+                query_list = [query]
         # -----------------------------------------------
         if not node.parent: # node == node.root
             if not query:
                 self.main = generic_query(node)
-            elif node.expected_char == ']':
+            elif node.expected_char == ']' or is_main:
                 self.main = query
             elif node.has_join():
                 query_list = [query]
                 self.main = generic_query(node)
         DQL_Object.catalog = {}
-        self.cte_list.append( CTE(node.description, query_list) )
+        if query_list:
+            self.cte_list.append( CTE(node.description, query_list) )
 
     def __str__(self):
         if not self.main:
@@ -4256,6 +4299,10 @@ if __name__ == "__main__":
             SELECT cliente_id
             FROM v_clientes_status
             WHERE status_cliente = 'Ativo'
+        ) OR produto_id IN (
+            SELECT produto_id
+            FROM Avaliacoes
+            WHERE nota > 4.5
         )
         GROUP BY categoria
         ;
